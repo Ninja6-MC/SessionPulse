@@ -1,0 +1,99 @@
+# SessionPulse Release Lifecycle & Publishing Guide
+
+This document defines the release policies, branch strategy, versioning rules, and multi-platform publishing procedures for **SessionPulse**.
+
+---
+
+## 1. Versioning Rules (SemVer 2.0.0)
+
+Every release follows `MAJOR.MINOR.PATCH[-PRERELEASE]`:
+* **MAJOR (`X.0.0`)**: Incompatible API breaks, architectural redesigns, or config schema breaks.
+* **MINOR (`1.X.0`)**: New features (e.g. Velocity companion, new notification channels, PlaceholderAPI support).
+* **PATCH (`1.0.X`)**: Bug fixes and performance patches.
+* **Pre-releases**:
+  * `v1.0.0-alpha.1` (Internal experimental builds)
+  * `v1.0.0-beta.1` (Public feature-complete testing builds)
+  * `v1.0.0-rc.1` (Release candidate)
+
+---
+
+## 2. Release Tiers & Distribution Channels
+
+Every tier is cut by tagging a commit on `main`. The tag decides the tier, not the branch —
+there is no separate release branch.
+
+```
+                    [ feat/… fix/… docs/… topic branches ]
+                                      │
+                                      ▼
+                            [ PR squashed into main ]
+                                      │
+                ┌─────────────────────┴─────────────────────┐
+                ▼                                           ▼
+   ┌─────────────────────────┐                 ┌─────────────────────────┐
+   │   ALPHA (vX.Y.Z-alpha)  │                 │    BETA (vX.Y.Z-beta)   │
+   │ • Experimental          │                 │ • Feature-Complete      │
+   │ • Internal / Staging    │                 │ • Public Testing        │
+   │ • GitHub Pre-release    │                 │ • Modrinth/Hangar Beta  │
+   └────────────┬────────────┘                 └────────────┬────────────┘
+                │                                           │
+                └─────────────────────┬─────────────────────┘
+                                      ▼
+                         ┌─────────────────────────┐
+                         │   MARKET / GA (vX.Y.Z)  │
+                         │ • Production Stable     │
+                         │ • GitHub Latest Release │
+                         │ • Modrinth Featured     │
+                         │ • Hangar Release        │
+                         │ • SpigotMC Resource     │
+                         └─────────────────────────┘
+```
+
+| Tier | Git Tag Pattern | Source Branch | Stability Level | Published Channels |
+| :--- | :--- | :--- | :--- | :--- |
+| **Alpha** | `vX.Y.Z-alpha.N` | `main` | Experimental | GitHub Releases (*Pre-release*), CI Artifacts, Modrinth (*alpha*) |
+| **Beta / RC** | `vX.Y.Z-beta.N` | `main` | Feature-Complete | GitHub Releases (*Pre-release*), Modrinth (*beta*), Paper Hangar (*Beta*) |
+| **Market (GA)** | `vX.Y.Z` | `main` | Production Stable | GitHub Releases (*Latest*), Modrinth (*Featured*), Paper Hangar (*Release*), SpigotMC |
+
+---
+
+## 3. How to Execute a Release
+
+### Step 1: Pre-Release Checklist
+1. All target PRs merged into `main`, with CI green on the merge commit.
+2. Run test suite locally:
+   ```bash
+   ./gradlew test
+   ```
+3. Update `CHANGELOG.md` under the target version header.
+
+### Step 2: Cut the Tag
+
+Tag the release on `main`:
+
+```bash
+git tag -a v0.1.0 -m "v0.1.0"
+git push origin v0.1.0
+```
+
+### Step 3: Automated CI Actions
+GitHub Actions (`.github/workflows/release.yml`) will:
+1. Reject the tag unless it matches `vMAJOR.MINOR.PATCH` with an optional `-alpha.N`,
+   `-beta.N` or `-rc.N` suffix.
+2. Require a `## [MAJOR.MINOR.PATCH]` section in `CHANGELOG.md` for a stable release.
+3. Compile with Java 21 and run JUnit 5 tests.
+4. Build optimized `SessionPulse-<version>.jar`.
+5. Compute SHA-256 checksums (`SessionPulse-<version>.jar.sha256`).
+6. Publish release notes and JARs to GitHub Releases.
+7. Publish to Modrinth, then to Paper Hangar.
+
+### Repository Secrets
+
+| Secret | Used by | Publishing is skipped if absent |
+| :--- | :--- | :--- |
+| `MODRINTH_TOKEN` | Modrinth step (`mc-publish`) | Yes |
+| `HANGAR_API_TOKEN` | Hangar step (`publishPluginPublicationToHangar`) | Yes |
+
+Neither is required for a release to succeed. Without them the workflow still tests,
+builds and publishes to GitHub Releases, and simply skips the registry it has no token
+for.

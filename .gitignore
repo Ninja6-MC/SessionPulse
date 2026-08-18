@@ -1,35 +1,30 @@
-# Compiled class files
-*.class
-
-# Log files
-*.log
-
-# Build outputs
-build/
-out/
-target/
-
 # Gradle
 .gradle/
+build/
 !gradle/wrapper/gradle-wrapper.jar
 
-# IDE
+# Run-paper & Local Test Server
+run/
+# Smoke-test working directories (run-paper/, run-folia/).
+run-*/
+logs/
+*.log
+crash-reports/
+
+# IDE & Editor
 .idea/
 *.iml
+.vscode/
 *.ipr
 *.iws
-.vscode/
-.settings/
 .project
 .classpath
-*.swp
-*~
+.settings/
 
-# OS
+# OS Specific
 .DS_Store
 Thumbs.db
-desktop.ini
 
-# Distribution
-dist/
-libs/
+# Output JARs
+*.jar
+!gradle/wrapper/gradle-wrapper.jar

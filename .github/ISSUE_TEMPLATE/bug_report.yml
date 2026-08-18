@@ -1,0 +1,62 @@
+name: Bug Report
+description: Report a bug or unintended behavior in SessionPulse
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a bug. Please ensure you are running the latest version of SessionPulse before submitting.
+
+  - type: input
+    id: version
+    attributes:
+      label: SessionPulse Version
+      placeholder: "e.g. 0.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: server-version
+    attributes:
+      label: Server Software & Version
+      placeholder: "e.g. Paper 1.21.1 build 120 / Spigot 1.20.4"
+    validations:
+      required: true
+
+  - type: input
+    id: hooks
+    attributes:
+      label: Installed Soft-Dependencies
+      placeholder: "e.g. EssentialsX 2.20.1, FoliaLib 0.4.1"
+    validations:
+      required: false
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: How can we reproduce the issue?
+      placeholder: |
+        1. Player joins server
+        2. After 60 minutes, no milestone notification appears
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Server Logs / Stack Trace
+      description: Paste any relevant console output or stack traces.
+      render: text
+    validations:
+      required: false
