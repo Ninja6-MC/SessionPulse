@@ -24,10 +24,15 @@ gradlew.bat     text eol=crlf
 *.yaml          text eol=lf
 *.md            text eol=lf
 
-# Two files no extension-based pattern reaches: LICENSE is extensionless by convention,
-# and a pattern for .gitattributes has to name it literally.
+# Four files that no extension-based pattern reaches. LICENSE is extensionless by
+# convention; the other three are all extension and no stem, so a pattern has to name
+# each literally. Listing all four rather than only the obvious two: after this, no
+# tracked file in the repository checks out as CRLF on a clone with core.autocrlf=true,
+# which is a property worth being able to state without qualification.
 LICENSE         text eol=lf
 .gitattributes  text eol=lf
+.editorconfig   text eol=lf
+.gitignore      text eol=lf
 
 # Never apply end-of-line conversion to binaries.
 *.jar           binary
