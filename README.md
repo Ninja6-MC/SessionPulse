@@ -1,7 +1,10 @@
 # SessionPulse
 
 <p align="center">
-  <img src="docs/assets/icon.svg" width="160" height="160" alt="SessionPulse Logo" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/icon-transparent-dark.svg">
+    <img src="docs/assets/icon-transparent-light.svg" width="160" height="160" alt="">
+  </picture>
 </p>
 
 <p align="center">
@@ -10,9 +13,6 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="License: GPL v3" /></a>
-  <img src="https://img.shields.io/badge/Java-21%2B-orange.svg" alt="Java 21+" />
-  <img src="https://img.shields.io/badge/Minecraft-1.20.x--26.x-brightgreen.svg" alt="Minecraft Versions" />
-  <img src="https://img.shields.io/badge/Folia-Supported-purple.svg" alt="Folia Supported" />
 </p>
 
 Part of the [Ninja6-MC](https://github.com/Ninja6-MC) plugin suite.

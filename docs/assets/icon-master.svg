@@ -12,27 +12,29 @@
     3. Paint arrives through inherited presentation attributes: polyline leaves stroke
        unset (fill="none" explicit), circle leaves fill unset (stroke="none" explicit).
     4. Safe zone: all artwork within r <= 460 of (512,512).
-    5. translate(0,51) balances the bottom miter/stroke (Y=728) and top apex dot
-       (Y=194) so ink centres exactly on Y=512.
+    5. The +51 in y is BAKED INTO THE COORDINATES, not applied as a transform. It
+       balances the bottom miter/stroke against the top apex dot so the ink centres
+       exactly on Y=512. It used to be a `<g transform="translate(0, 51)">` wrapping
+       each group; the export script's safe-zone gate refuses `transform=` outright,
+       because a transform it half-understands measures the wrong points and a
+       `scale()` would silently rescale stroke-width too. Flattening is the fix the
+       script's own error message asks for, and it matches SpiralGenesis's master.
+       Rendering is unchanged - every generated PNG is byte-identical across it.
   -->
   <defs>
-    <!-- FULL MARK: Stroke 48, Apex Dot r=54 at (512, 248) -->
+    <!-- FULL MARK: Stroke 48, Apex Dot r=54 at (512, 299) -->
     <g id="geo">
-      <g transform="translate(0, 51)">
-        <polyline points="192,512 336,512 336,608 440,608 440,248 584,248 584,704 688,704 688,512 832,512"
-                  fill="none" stroke-width="48"
-                  stroke-linecap="square" stroke-linejoin="miter" />
-        <circle cx="512" cy="248" r="54" stroke="none" />
-      </g>
+      <polyline points="192,563 336,563 336,659 440,659 440,299 584,299 584,755 688,755 688,563 832,563"
+                fill="none" stroke-width="48"
+                stroke-linecap="square" stroke-linejoin="miter" />
+      <circle cx="512" cy="299" r="54" stroke="none" />
     </g>
 
     <!-- SMALL-SIZE CUT (<=24px): Stroke 118, Dot dropped for clear aperture -->
     <g id="geo-small">
-      <g transform="translate(0, 51)">
-        <polyline points="192,512 336,512 336,608 440,608 440,248 584,248 584,704 688,704 688,512 832,512"
-                  fill="none" stroke-width="118"
-                  stroke-linecap="square" stroke-linejoin="miter" />
-      </g>
+      <polyline points="192,563 336,563 336,659 440,659 440,299 584,299 584,755 688,755 688,563 832,563"
+                fill="none" stroke-width="118"
+                stroke-linecap="square" stroke-linejoin="miter" />
     </g>
   </defs>
 
