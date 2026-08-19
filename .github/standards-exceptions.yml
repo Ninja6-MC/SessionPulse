@@ -1,0 +1,14 @@
+# Standards exceptions for Ninja6-MC/SessionPulse
+#
+# Schema and worked example: Ninja6-MC/.github standards/README.md section 3.
+# An empty `exceptions` list is a statement that this repository conforms; the file is
+# required either way (N6-REPO-05).
+
+repo: SessionPulse
+
+# This repository has no exceptions: it conforms to every rule in the register.
+#
+# It was the last to adopt, deliberately - standards/README.md section 6 puts it last so
+# that it adopts a register that has stopped moving. Every gap the checker reported is
+# closed in the same pass rather than excepted, which is why this list is empty.
+exceptions: []
