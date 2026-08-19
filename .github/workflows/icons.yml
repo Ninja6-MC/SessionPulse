@@ -1,0 +1,66 @@
+name: Icons
+
+# docs/assets is generated from docs/assets/icon-master.svg, but the outputs are
+# committed because platforms and the README reference them directly. That means
+# nothing stops someone hand-editing a generated file, or editing the master and
+# forgetting to re-export - the "do not edit" headers in those files are a request,
+# not a check. This job makes it one.
+#
+# It also runs the export's safe-zone and palette gates, so artwork that a circular
+# avatar crop would clip, or a variant carrying the wrong theme's ink, cannot reach
+# main. Those gates only help if something actually runs them; locally they run when
+# someone remembers to.
+#
+# Ported from SpiralGenesis, where the same job lives inside ci.yml alongside the
+# Gradle build. This repository has no build yet, so it stands alone rather than
+# waiting for one - the artwork is here now and is what needs guarding.
+#
+# Scoped with `paths:` rather than a paths-filter job. SpiralGenesis needs the filter
+# because a workflow-level `paths:` there would also gate its build and smoke jobs;
+# this workflow contains nothing else, so the simpler mechanism is the right one and
+# it avoids a third-party action.
+
+on:
+  pull_request:
+    paths:
+      - 'docs/assets/**'
+      - 'scripts/export-icons.mjs'
+      - '.github/workflows/icons.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'docs/assets/**'
+      - 'scripts/export-icons.mjs'
+      - '.github/workflows/icons.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    name: Committed Icons Match The Master
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Regenerate Icons From The Master
+        run: node scripts/export-icons.mjs
+
+      - name: Fail If The Committed Artwork Drifted
+        run: |
+          if git diff --quiet -- docs/assets; then
+            echo "docs/assets matches what the master produces."
+            exit 0
+          fi
+          echo "::error::docs/assets does not match scripts/export-icons.mjs output."
+          echo "Run 'node scripts/export-icons.mjs' and commit the result."
+          git diff --stat -- docs/assets
+          exit 1
