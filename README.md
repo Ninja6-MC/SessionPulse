@@ -46,7 +46,9 @@ servers that want structured rest breaks (families, schools, wellness communitie
 
 ## Brand Assets
 
-Brand and identity assets are located under [`docs/assets/`](docs/assets/README.md), generated from [`icon-master.svg`](docs/assets/icon-master.svg) via [`scripts/export-icons.mjs`](scripts/export-icons.mjs) per the [Ninja6-MC Brand Identity System](https://github.com/Ninja6-MC/brand).
+Brand and identity assets are located under [`docs/assets/`](docs/assets/README.md), generated from [`icon-master.svg`](docs/assets/icon-master.svg) via [`scripts/export-icons.mjs`](scripts/export-icons.mjs) per the Ninja6-MC brand identity system. (That system lives in the organisation's
+private `brand` repository, so it is named rather than linked - a link would 404 for
+everyone reading this.)
 
 ---
 

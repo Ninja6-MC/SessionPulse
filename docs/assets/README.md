@@ -1,6 +1,14 @@
 # SessionPulse — Icon Assets
 
-Identity assets for **SessionPulse**, conforming to the [Ninja6-MC Brand Identity System](../../brand/ICON_PLAN.md).
+Identity assets for **SessionPulse**, conforming to the Ninja6-MC brand identity system
+(`ICON_PLAN.md` in the organisation's **private** `brand` repository - named rather than
+linked, because a link there 404s for anyone without access, and GitHub resolves relative
+links only within a single repository so a sibling-repo path cannot work either).
+
+> **This directory is hand-maintained.** Do not confuse it with `assets/` at the
+> repository root, which is delivered by the brand sync pipeline and is overwritten on
+> every sync. A repository's own artwork lives here; the shared organisation marks live
+> there. See `N6-REPO-03` in the org standards register.
 
 ## Authoring Source
 
