@@ -17,6 +17,23 @@ gradlew         text eol=lf
 gradlew.bat     text eol=crlf
 *.bat           text eol=crlf
 
+# Workflow YAML is read by GitHub, and Markdown is read by everyone. Both are text and
+# both belong pinned, or a Windows clone rewrites them on checkout (N6-CI-04). Their
+# absence is why the issue templates and PULL_REQUEST_TEMPLATE.md checked out as CRLF.
+*.yml           text eol=lf
+*.yaml          text eol=lf
+*.md            text eol=lf
+
+# Four files that no extension-based pattern reaches. LICENSE is extensionless by
+# convention; the other three are all extension and no stem, so a pattern has to name
+# each literally. Listing all four rather than only the obvious two: after this, no
+# tracked file in the repository checks out as CRLF on a clone with core.autocrlf=true,
+# which is a property worth being able to state without qualification.
+LICENSE         text eol=lf
+.gitattributes  text eol=lf
+.editorconfig   text eol=lf
+.gitignore      text eol=lf
+
 # Never apply end-of-line conversion to binaries.
 *.jar           binary
 *.png           binary

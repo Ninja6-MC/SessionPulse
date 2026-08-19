@@ -1,0 +1,28 @@
+# Standards exceptions for Ninja6-MC/SessionPulse
+#
+# Schema and worked example: Ninja6-MC/.github standards/README.md section 3.
+# An empty `exceptions` list is a statement that this repository conforms; the file is
+# required either way (N6-REPO-05).
+
+repo: SessionPulse
+
+exceptions:
+  - rule: N6-CI-05
+    type: transitional
+    reason: >
+      `main` is protected - pull request required, linear history, administrators
+      included, force-push and deletion blocked - but no required status checks are
+      listed, which is the half of the rule still missing. Adopting the DCO and standards
+      stubs in this same change is precisely what makes those checks report under the
+      names a required list would have to name: `dco / Check Sign-off` and
+      `standards / Check Standards`, prefixed because this repository calls the reusable
+      workflows rather than hosting them. N6-CI-03 forbids requiring a name before it
+      reports, so the list cannot be set in this change.
+      It also cannot be set the moment this merges. Open pull requests #1 and #2 both
+      predate the stubs: #2 still reports the old unprefixed `Check Sign-off` and #1
+      reports no checks at all, so requiring the new names before those branches are
+      rebased would block both indefinitely. The list is set once the names have been
+      observed on a real run and both open pull requests have been rebased or closed.
+    approved_by: bharathasl74185@gmail.com
+    approved_on: 2026-08-19
+    revisit_by: 2026-09-19
