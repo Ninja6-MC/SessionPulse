@@ -6,23 +6,16 @@
 
 repo: SessionPulse
 
-exceptions:
-  - rule: N6-CI-05
-    type: transitional
-    reason: >
-      `main` is protected - pull request required, linear history, administrators
-      included, force-push and deletion blocked - but no required status checks are
-      listed, which is the half of the rule still missing. Adopting the DCO and standards
-      stubs in this same change is precisely what makes those checks report under the
-      names a required list would have to name: `dco / Check Sign-off` and
-      `standards / Check Standards`, prefixed because this repository calls the reusable
-      workflows rather than hosting them. N6-CI-03 forbids requiring a name before it
-      reports, so the list cannot be set in this change.
-      It also cannot be set the moment this merges. Open pull requests #1 and #2 both
-      predate the stubs: #2 still reports the old unprefixed `Check Sign-off` and #1
-      reports no checks at all, so requiring the new names before those branches are
-      rebased would block both indefinitely. The list is set once the names have been
-      observed on a real run and both open pull requests have been rebased or closed.
-    approved_by: bharathasl74185@gmail.com
-    approved_on: 2026-08-19
-    revisit_by: 2026-09-19
+# This repository has no exceptions: it conforms to every rule in the register.
+#
+# The transitional N6-CI-05 entry that lived here is closed. It existed because `main`
+# was protected without any required status checks: adopting the DCO and standards stubs
+# is what makes those checks report under the names a required list has to name, and
+# N6-CI-03 forbids requiring a name before it reports. It also had to outlast the merge
+# that added the stubs, because open pull requests #1 and #2 predated them - #2 still
+# reported the old unprefixed `Check Sign-off` and #1 reported no checks at all.
+#
+# All of that is now done. #1 was superseded and closed, #2 was rebased and merged, and
+# `main` requires `dco / Check Sign-off` and `standards / Check Standards` with `strict`
+# on. Both names were read off a real run before being required.
+exceptions: []
