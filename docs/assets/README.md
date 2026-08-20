@@ -6,9 +6,11 @@ linked, because a link there 404s for anyone without access, and GitHub resolves
 links only within a single repository so a sibling-repo path cannot work either).
 
 > **This directory is hand-maintained.** Do not confuse it with `assets/` at the
-> repository root, which is delivered by the brand sync pipeline and is overwritten on
-> every sync. A repository's own artwork lives here; the shared organisation marks live
-> there. See `N6-REPO-03` in the org standards register.
+> repository root, which is delivered by pull request from
+> `.github/workflows/sync-assets.yml` in `brand` and is overwritten on every sync — its
+> master is `src/ninja6-master.svg` there, not anything in this repository. A
+> repository's own artwork lives here; the shared organisation marks live there. See
+> `N6-REPO-03` in the org standards register.
 
 ## Authoring Source
 
