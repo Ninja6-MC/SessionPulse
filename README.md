@@ -55,9 +55,10 @@ not edit a generated file.
 
 [`assets/`](assets/) holds the **shared organisation marks** and is **machine-managed**.
 It is delivered by pull request from the asset-sync pipeline in the organisation's `brand`
-repository, and its master lives there, not here. Anything hand-edited in it survives only
-until the next sync, and a local hook blocks such edits in the first place. See
-`N6-REPO-03` in the org standards register.
+repository, and its master lives there, not here. Anything hand-edited in it is overwritten
+by the next sync, so changes to those marks belong in `brand`. See `N6-REPO-03` in the org
+standards register, and [`docs/assets/README.md`](docs/assets/README.md) for the pipeline
+and master by name.
 
 Both conform to the Ninja6-MC brand identity system. (That system lives in the
 organisation's private `brand` repository, so it is named rather than linked - a link
