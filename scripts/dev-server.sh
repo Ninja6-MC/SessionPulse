@@ -34,10 +34,11 @@ cd "$REPO_ROOT"
 echo "==> Building plugin"
 ./gradlew shadowJar -q
 
-# The exclusions are load-bearing: withSourcesJar() and withJavadocJar() are both on, so
-# build/libs holds three jars and only one of them is the plugin.
+# The exclusions are load-bearing: withSourcesJar() and withJavadocJar() are both on and
+# tasks.jar is classified `thin`, so build/libs holds four jars and only one of them is
+# the shaded plugin.
 PLUGIN_JAR="$(find build/libs -maxdepth 1 -name '*.jar' \
-    ! -name '*-sources.jar' ! -name '*-javadoc.jar' | head -1)"
+    ! -name '*-sources.jar' ! -name '*-javadoc.jar' ! -name '*-thin.jar' | head -1)"
 
 if [[ -z "$PLUGIN_JAR" ]]; then
     echo "error: no plugin jar found in build/libs" >&2

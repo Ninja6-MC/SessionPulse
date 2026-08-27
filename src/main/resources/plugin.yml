@@ -2,9 +2,11 @@ name: ${name}
 version: '${version}'
 main: com.ninja6.sessionpulse.SessionPulsePlugin
 api-version: '${apiVersion}'
-# Quoted, unlike SpiralGenesis's bare scalar: this description contains commas, and a
-# plain YAML scalar that begins with `&` is an anchor. Quoting removes the class of
-# problem rather than depending on the current wording.
+# Quoted, unlike SpiralGenesis's bare scalar: a plain YAML scalar that begins with `&` is
+# an anchor. Quoting removes the class of problem rather than depending on the current
+# wording. The quotes are single quotes around an interpolated value, so an apostrophe
+# reaching project.description would break this file at plugin load, with nothing at
+# build time to catch it.
 description: '${description}'
 author: Ninja6-MC
 # `folia-supported: true` is deliberately absent. The flag is a claim about the

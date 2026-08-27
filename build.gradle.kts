@@ -29,13 +29,18 @@ repositories {
     maven("https://repo.tcoded.com/releases")
 }
 
+// Declared once. The compile target and the test classpath must never drift apart,
+// which is what the compile-target comment below exists to prevent, and two literals
+// let a one-sided bump do exactly that.
+val spigotApi = "org.spigotmc:spigot-api:1.20.4-R0.1-SNAPSHOT"
+
 dependencies {
     // Spigot's API, NOT paper-api. Compiling against paper-api would let a Paper-only
     // method compile and then fail at runtime on Spigot with NoSuchMethodError,
     // undetected until the smoke matrix. This makes the compiler the gate instead, which
-    // is what makes the README's Spigot claim enforceable. 1.20.4 matches the
-    // api-version declared in plugin.yml.
-    compileOnly("org.spigotmc:spigot-api:1.20.4-R0.1-SNAPSHOT")
+    // is what makes the README's Spigot claim enforceable. 1.20.4 is in the 1.20
+    // series declared as api-version in plugin.yml.
+    compileOnly(spigotApi)
 
     // Unit testing.
     testImplementation(platform("org.junit:junit-bom:5.10.2"))
@@ -45,7 +50,7 @@ dependencies {
     // compileOnly dependencies are not inherited by the test compile classpath, and
     // YamlConfiguration runs standalone with no server instance, so the test suite needs
     // its own copy to cover configuration parsing from the configuration issue onward.
-    testImplementation("org.spigotmc:spigot-api:1.20.4-R0.1-SNAPSHOT")
+    testImplementation(spigotApi)
 }
 
 tasks {
@@ -116,6 +121,15 @@ tasks {
                 )
             }
         }
+    }
+
+    // shadowJar owns the canonical archive name, so the thin jar needs its own.
+    // `assemble` runs :jar but not :shadowJar, so without this the thin jar lands at the
+    // exact path the release pipeline and scripts/dev-server.sh pick up - which would
+    // silently ship a plugin missing its bundled dependencies once the FoliaLib and
+    // Adventure relocations land.
+    jar {
+        archiveClassifier.set("thin")
     }
 
     shadowJar {
