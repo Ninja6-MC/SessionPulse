@@ -1,0 +1,38 @@
+name: ${name}
+version: '${version}'
+main: com.ninja6.sessionpulse.SessionPulsePlugin
+api-version: '${apiVersion}'
+# Quoted, unlike SpiralGenesis's bare scalar: a plain YAML scalar that begins with `&` is
+# an anchor. Quoting removes the class of problem rather than depending on the current
+# wording. The quotes are single quotes around an interpolated value, so an apostrophe
+# reaching project.description would break this file at plugin load, with nothing at
+# build time to catch it.
+description: '${description}'
+author: Ninja6-MC
+# `folia-supported: true` is deliberately absent. The flag is a claim about the
+# scheduler call sites in the source, and there are none yet. It lands with FoliaLib.
+
+commands:
+  spulse:
+    description: SessionPulse commands
+    aliases: [sessionpulse]
+    permission: sessionpulse.use
+    usage: /spulse <time|top|reset|reload>
+
+permissions:
+  sessionpulse.use:
+    description: Allows a player to check their own session time and the leaderboard.
+    default: true
+  sessionpulse.admin:
+    description: Allows resetting other players, reloading the configuration, and reading another player's time.
+    default: op
+    # NOT optional, and dot notation does not substitute for it. Bukkit attaches no
+    # meaning to the dots in a node name - `sessionpulse.admin` does not implicitly grant
+    # `sessionpulse.use`. Without this block, a LuckPerms-managed server that strips
+    # default permissions leaves a staff member holding only `.admin` unable to run the
+    # command at all, with a bare "no permission" and nothing in the log.
+    children:
+      sessionpulse.use: true
+  sessionpulse.exempt:
+    description: Skips reminders and enforcement for this player.
+    default: false

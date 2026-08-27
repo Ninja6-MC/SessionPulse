@@ -31,6 +31,14 @@ gradlew.bat     text eol=crlf
 *.yaml          text eol=lf
 *.md            text eol=lf
 
+# Build scripts, Java sources and properties files. Not covered by any rule ID - the
+# Standards checker does not look at these extensions - but the block below promises that
+# no tracked file checks out as CRLF, and without these three the Gradle scaffolding
+# falsifies it.
+*.kts           text eol=lf
+*.java          text eol=lf
+*.properties    text eol=lf
+
 # Four files that no extension-based pattern reaches. LICENSE is extensionless by
 # convention; the other three are all extension and no stem, so a pattern has to name
 # each literally. Listing all four rather than only the obvious two: after this, no

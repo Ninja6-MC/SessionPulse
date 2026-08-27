@@ -2,7 +2,9 @@
 # is the trade the pinning makes: a tag cannot be repointed under us, but a pin goes
 # stale in silence. This is the other half of it.
 #
-# Actions only. There is no build here yet; add an ecosystem when there is one.
+# There is a build here now, so the Gradle ecosystem is declared alongside the actions
+# one. N6-CI-06's normative text makes Dependabot the other half of SHA pinning, and the
+# first Gradle dependencies arrive in the same change that adds this block.
 version: 2
 
 updates:
@@ -48,4 +50,43 @@ updates:
       - dependencies
     # One pull request per group, so this is a backstop rather than a limit that
     # shapes anything. It is what split the first batch when updates were ungrouped.
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: gradle
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    # Majors are split from minors and patches for the same reason the actions groups
+    # are, and it matters concretely here: com.gradleup.shadow 9.x exists on the plugin
+    # portal and requires Gradle 9, so an unsegregated group would propose a bump that
+    # cannot build on an 8.10.2 wrapper.
+    groups:
+      gradle:
+        applies-to: version-updates
+        patterns:
+          - '*'
+        update-types:
+          - minor
+          - patch
+      gradle-major:
+        applies-to: version-updates
+        patterns:
+          - '*'
+        update-types:
+          - major
+    ignore:
+      # The compile target is a compatibility decision, not a security one: the
+      # spigot-api version decides the OLDEST server this plugin runs on, so a bot
+      # raising it narrows the supported range silently. Changed by hand, with the
+      # api-version in plugin.yml changed in the same commit.
+      - dependency-name: org.spigotmc:spigot-api
+    commit-message:
+      # `build` rather than `ci`: ci is the Conventional Commits type for workflow
+      # actions, build is the one for build-system dependencies.
+      prefix: build
+    labels:
+      - dependencies
+    # The Gradle wrapper version is not covered by package-ecosystem: gradle. It stays a
+    # manual bump.
     open-pull-requests-limit: 5
