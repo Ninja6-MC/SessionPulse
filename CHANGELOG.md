@@ -16,3 +16,6 @@ adheres to [Semantic Versioning](https://semver.org/).
   nodes, with `sessionpulse.admin` declaring `sessionpulse.use` as a child.
 - `scripts/dev-server.sh`, which boots a local Paper server with the freshly built
   plugin installed.
+- Continuous Integration workflow running Gradle wrapper validation, tests and the
+  full build on every push to `main` and every pull request, uploading the shaded jar
+  as a build artifact.

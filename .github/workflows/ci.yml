@@ -1,0 +1,119 @@
+name: Continuous Integration
+
+on:
+  # Topic branches are covered by the pull_request trigger, so listing their prefixes here
+  # too would only run every branch twice once its PR is open. `main` is the trunk and has
+  # no PR of its own, so it needs the push trigger.
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Everything below only reads the repository: it builds, tests and uploads a build
+# artifact. Nothing writes back, so the token is scoped to reads and any job that ever
+# does need to write has to say so itself.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    # A Gradle step hung fetching the -SNAPSHOT would burn the 360-minute default; a cold
+    # build takes about a minute.
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # `gradle/wrapper/gradle-wrapper.jar` is an executable committed to the repository
+      # and run by every job that calls ./gradlew, and no reviewer can read a diff of it.
+      # This checksums it against Gradle's published releases, which is the accepted
+      # answer - deleting the jar is not, the wrapper has to stay.
+      #
+      # Before anything that could execute it. Validating after the fact would prove only
+      # that the jar which already ran was the right one.
+      #
+      # The check reaches services.gradle.org, and that call has no retry of its own. It
+      # failed twice on 2026-08-25 with ENETUNREACH and ETIMEDOUT, on unrelated pull
+      # requests in SpiralGenesis, and a re-run cleared it both times. Because the step
+      # runs early, a transient failure costs the whole job. So it is attempted twice
+      # before the job is allowed to fail.
+      #
+      # Pinning the expected checksum into this repository would remove the network call
+      # rather than soften it, so the network call stays: the guarantee this check
+      # provides is that the checksum comes from a source an attacker editing this
+      # repository cannot also edit. A committed checksum can be changed in the same pull
+      # request as the jar it describes.
+      - name: Validate Gradle Wrapper
+        id: wrapper
+        continue-on-error: true
+        uses: gradle/actions/wrapper-validation@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+
+      # ETIMEDOUT arrives with its own delay built in, but ENETUNREACH returns instantly,
+      # so retrying straight away would reach the same unreachable network microseconds
+      # later and prove nothing. Give a brief outage time to clear.
+      - name: Wait Before Revalidating
+        if: steps.wrapper.outcome == 'failure'
+        run: sleep 15
+
+      # Only reached when the first attempt failed. This one is not tolerated: a wrapper
+      # that fails validation twice fails the job.
+      - name: Validate Gradle Wrapper (retry)
+        if: steps.wrapper.outcome == 'failure'
+        uses: gradle/actions/wrapper-validation@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+
+      - name: Set up Java 21
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+
+      # Defensive only. `gradlew` currently carries mode 100755 in the index, so this is a
+      # no-op on every checkout of this repository as it stands. It is kept because the
+      # bit can be lost by a future commit made from a filesystem that does not carry it,
+      # and because the step is byte-identical to SpiralGenesis's and costs nothing.
+      - name: Ensure Gradle Wrapper Is Executable
+        run: chmod +x ./gradlew
+
+      # There are no test sources yet, so this reports NO-SOURCE and passes trivially.
+      # It is a separate step from the build anyway, so that once tests exist a red run
+      # says "tests" rather than "gradle".
+      - name: Run Tests
+        run: ./gradlew test --no-daemon
+
+      # `build`, not `shadowJar`: it runs check plus the full assemble, so the sources
+      # and javadoc jars the release pipeline will publish are compiled here rather than
+      # first failing at tag time. `build` already dependsOn(shadowJar) in build.gradle.kts.
+      - name: Build
+        run: ./gradlew build --no-daemon
+
+      # build/libs holds four jars: the shaded SessionPulse-<version>.jar, and the
+      # -thin, -sources and -javadoc siblings. Only the shaded one is the plugin. The
+      # exclusions are load-bearing: `jar` carries the `thin` classifier precisely so the
+      # thin jar cannot occupy the plugin's path, and an unqualified *.jar glob would put
+      # all four in one directory for a smoke job or a human to pick the wrong one out of.
+      # The list is a denylist, so any new archive task added to the build has to extend
+      # these exclusions or its jar joins the artifact silently.
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: SessionPulse-SNAPSHOT
+          path: |
+            build/libs/*.jar
+            !build/libs/*-thin.jar
+            !build/libs/*-sources.jar
+            !build/libs/*-javadoc.jar
+          if-no-files-found: error
+          retention-days: 7
