@@ -24,6 +24,9 @@ jobs:
   build:
     name: Build and Test
     runs-on: ubuntu-latest
+    # A Gradle step hung fetching the -SNAPSHOT would burn the 360-minute default; a cold
+    # build takes about a minute.
+    timeout-minutes: 20
 
     steps:
       - name: Checkout Code
@@ -46,10 +49,10 @@ jobs:
       # before the job is allowed to fail.
       #
       # Pinning the expected checksum into this repository would remove the network call
-      # rather than soften it, and was rejected: the guarantee this check provides is
-      # that the checksum comes from a source an attacker editing this repository cannot
-      # also edit. A committed checksum can be changed in the same pull request as the
-      # jar it describes.
+      # rather than soften it, so the network call stays: the guarantee this check
+      # provides is that the checksum comes from a source an attacker editing this
+      # repository cannot also edit. A committed checksum can be changed in the same pull
+      # request as the jar it describes.
       - name: Validate Gradle Wrapper
         id: wrapper
         continue-on-error: true
@@ -101,6 +104,8 @@ jobs:
       # exclusions are load-bearing: `jar` carries the `thin` classifier precisely so the
       # thin jar cannot occupy the plugin's path, and an unqualified *.jar glob would put
       # all four in one directory for a smoke job or a human to pick the wrong one out of.
+      # The list is a denylist, so any new archive task added to the build has to extend
+      # these exclusions or its jar joins the artifact silently.
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
