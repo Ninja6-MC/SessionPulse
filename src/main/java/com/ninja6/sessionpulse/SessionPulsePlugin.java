@@ -1,5 +1,6 @@
 package com.ninja6.sessionpulse;
 
+import com.ninja6.sessionpulse.config.PluginConfig;
 import com.ninja6.sessionpulse.platform.FoliaLibScheduler;
 import com.ninja6.sessionpulse.platform.Scheduler;
 import net.kyori.adventure.platform.bukkit.BukkitAudiences;
@@ -26,8 +27,23 @@ public class SessionPulsePlugin extends JavaPlugin {
 
     private BukkitAudiences audiences;
 
+    /**
+     * The configuration in force.
+     *
+     * <p>volatile, and never mutated. {@link #reload()} builds a new {@link PluginConfig}
+     * and swaps this reference; the session tick and the flush task will read it from
+     * whatever thread FoliaLib gave them, so the write has to publish safely. Mirrors
+     * {@code SpiralGenesisPlugin#spawnProtector}, which is volatile for the same reason.
+     */
+    private volatile PluginConfig config;
+
     @Override
     public void onEnable() {
+        // Writes config.yml into the data folder on a fresh install and leaves an existing
+        // one alone. Must come before the first read, or getConfig() sees an empty file.
+        saveDefaultConfig();
+        loadConfiguration();
+
         this.scheduler = new FoliaLibScheduler(this);
 
         // Created here, closed in onDisable, and it is the ONLY route to a player's screen
@@ -67,7 +83,55 @@ public class SessionPulsePlugin extends JavaPlugin {
             audiences.close();
             audiences = null;
         }
+        this.config = null;
         getLogger().info("SessionPulse disabled.");
+    }
+
+    /**
+     * Rebuilds the configuration snapshot from disk and reports what it had to correct.
+     *
+     * <p>A new object every time, never a mutation of the old one. Anything holding
+     * {@code this::config} picks the new one up on its next call; anything that captured
+     * the object would keep running the previous file's settings for ever, which is the
+     * failure {@code SpawnProtector} in SpiralGenesis exists to prevent.
+     */
+    private void loadConfiguration() {
+        this.config = new PluginConfig(getConfig());
+        // Every load, including a reload: a value the plugin corrected is one the operator
+        // reads back out of their own file and believes, so it has to be said each time.
+        for (String warning : config.warnings()) {
+            getLogger().warning(warning);
+        }
+        getLogger().info("Configuration loaded: " + config.milestones().size()
+                + " milestone(s), overtime "
+                + (config.overtime().enabled() ? "on" : "off")
+                + ", enforcement "
+                + (config.enforcement().enabled() ? "on" : "off") + ".");
+    }
+
+    /**
+     * Re-reads config.yml. Called by {@code /spulse reload} once the command issue lands.
+     *
+     * <p>Does NOT call {@code Scheduler#cancelAll}. That is disable-only: cancelling every
+     * task here would kill the session tick and the plugin would silently stop counting.
+     * The reload issue re-schedules the flush and tick tasks by their own handles.
+     */
+    public void reload() {
+        reloadConfig();
+        loadConfiguration();
+    }
+
+    /**
+     * The configuration in force right now.
+     *
+     * <p>Long-lived services take {@code Supplier<PluginConfig>} and are handed
+     * {@code plugin::config}, so a reload reaches them without any of them holding a
+     * reference that has to be replaced.
+     *
+     * @return the current snapshot, never {@code null} between enable and disable
+     */
+    public PluginConfig config() {
+        return config;
     }
 
     /**
