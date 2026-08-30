@@ -19,3 +19,13 @@ adheres to [Semantic Versioning](https://semver.org/).
 - Continuous Integration workflow running Gradle wrapper validation, tests and the
   full build on every push to `main` and every pull request, uploading the shaded jar
   as a build artifact.
+- `platform/Scheduler`, the plugin's only scheduling seam, with `FoliaLibScheduler`
+  as its sole implementation and the only class permitted to name FoliaLib. The
+  blanket cancel is deliberately absent from the interface, so a reload cannot reach
+  it and silently stop the counting.
+- FoliaLib and Adventure shaded into the plugin jar, relocated under
+  `com.ninja6.sessionpulse.lib`, with `folia-supported: true` in `plugin.yml`. Every
+  message goes through `BukkitAudiences` on all platforms, because the relocated
+  Adventure is not the copy Paper ships.
+- Boot legs in CI that enable and disable the plugin on Paper and Folia, and a build
+  step that opens the packaged jar and proves the relocation applied.
