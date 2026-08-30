@@ -5,7 +5,10 @@
 # Every value below carries its clamp range and the reason it exists. A value
 # outside its range is corrected to the nearest end of it and the correction is
 # named in the server log with both numbers, so nothing is quietly different
-# from what this file says.
+# from what this file says. A value that cannot be read at all - a word where a
+# whole number belongs, a list where a message belongs - is not corrected but
+# replaced with the default shown here, and that is named in the log too. The
+# log always quotes the value as you wrote it.
 #
 # Everything here is MiniMessage, not legacy colour codes. See
 # https://docs.advntr.dev/minimessage/format.html

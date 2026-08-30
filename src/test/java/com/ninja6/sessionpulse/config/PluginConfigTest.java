@@ -115,6 +115,121 @@ class PluginConfigTest {
         assertEquals(1, config.warnings().size());
     }
 
+    @ParameterizedTest(name = "a prefix that is not text ({0}) falls back and is named")
+    @ValueSource(strings = {"[]", "5", "[1, 2]", "true"})
+    void aPrefixThatIsNotTextFallsBackAndIsNamed(String written) {
+        // getString stringifies whatever it finds, so `prefix: []` used to become the
+        // literal prefix "[]" and `prefix: 5` the literal prefix "5", both in silence.
+        PluginConfig config = parse("reminders:\n  prefix: " + written + "\n");
+
+        assertEquals("<gray>[<aqua>SessionPulse</aqua>]</gray> ", config.reminderPrefix());
+        assertEquals(1, config.warnings().size(), () -> "warnings: " + config.warnings());
+        String warning = config.warnings().get(0);
+        assertTrue(warning.startsWith("reminders.prefix"), warning);
+        assertTrue(warning.contains("not text"), warning);
+    }
+
+    @Test
+    @DisplayName("an overtime message that is not text falls back without switching overtime off")
+    void anOvertimeMessageThatIsNotTextFallsBack() {
+        PluginConfig config = parse(
+                "reminders:\n  overtime:\n    enabled: true\n    message: []\n");
+
+        assertTrue(config.overtime().enabled());
+        assertEquals("<red>You have been playing for <white><hours></white> hours.</red>",
+                config.overtime().message());
+        assertTrue(config.warnings().get(0).contains("not text"), config.warnings().toString());
+    }
+
+    @Test
+    @DisplayName("a kick message that is not text falls back without switching enforcement off")
+    void aKickMessageThatIsNotTextFallsBack() {
+        PluginConfig config = parse("enforcement:\n  enabled: true\n  kick-message: 5\n");
+
+        assertTrue(config.enforcement().enabled());
+        assertEquals("<yellow>Time for a break.</yellow>", config.enforcement().kickMessage());
+        assertTrue(config.warnings().get(0).contains("not text"), config.warnings().toString());
+    }
+
+    @Test
+    @DisplayName("a quoted number is a usable message - quoting is not the mistake being caught")
+    void aQuotedNumberIsAUsableMessage() {
+        PluginConfig config = parse("reminders:\n  prefix: \"5\"\n");
+        assertEquals("5", config.reminderPrefix());
+        assertEquals(List.of(), config.warnings());
+    }
+
+    @Test
+    @DisplayName("an enabled flag that is neither true nor false is named, not read as off")
+    void anUnreadableEnabledFlagIsNamed() {
+        PluginConfig config = parse("enforcement:\n  enabled: \"maybe\"\n");
+
+        assertFalse(config.enforcement().enabled());
+        String warning = config.warnings().get(0);
+        assertTrue(warning.startsWith("enforcement.enabled"), warning);
+        assertTrue(warning.contains("not true or false"), warning);
+    }
+
+    @ParameterizedTest(name = "enabled: {0} is read as written, silently")
+    @ValueSource(strings = {"true", "false", "\"true\"", "\"false\"", "yes", "no"})
+    void aReadableEnabledFlagIsSilent(String written) {
+        PluginConfig config = parse("enforcement:\n  enabled: " + written + "\n");
+        assertEquals(written.replace("\"", "").matches("true|yes"),
+                config.enforcement().enabled(), written);
+        assertEquals(List.of(), config.warnings());
+    }
+
+    @Test
+    @DisplayName("every warning opens with the key it is about")
+    void everyWarningOpensWithTheKeyItIsAbout() {
+        // .github/scripts/boot-test.sh greps the server log for exactly this shape to catch
+        // a shipped config.yml that produced any warning at all. An alternation of warning
+        // texts there could not be kept in step with this class - it silently fell behind
+        // and caught half of them - so the boot leg matches on the key instead, and this
+        // test is what makes that safe to rely on.
+        List<String> malformed = List.of(
+                "tracking:\n  window-reset-hours: abc",
+                "tracking:\n  window-reset-hours: 8.7",
+                "tracking:\n  window-reset-hours: 99999999999999",
+                "tracking:\n  window-reset-hours: 0",
+                "tracking:\n  afk:\n    mode: ESENTIALS",
+                "tracking:\n  afk:\n    idle-seconds: []",
+                "tracking:\n  flush-interval-minutes: 0",
+                "reminders:\n  prefix: \"<red>unclosed\"",
+                "reminders:\n  prefix: []",
+                "reminders:\n  milestones: 60",
+                "reminders:\n  milestones:\n    - 60",
+                "reminders:\n  milestones:\n    - message: \"hi\"",
+                "reminders:\n  milestones:\n    - minute: sixty\n      message: \"hi\"",
+                "reminders:\n  milestones:\n    - minute: 0\n      message: \"hi\"",
+                "reminders:\n  milestones:\n    - minute: 60\n      message: \"<red>oops\"",
+                "reminders:\n  milestones:\n    - minute: 60",
+                "reminders:\n  milestones:\n    - minute: 60\n      message: \"hi\"\n"
+                        + "      sound: NOT_A_SOUND",
+                "reminders:\n  milestones:\n    - minute: 60\n      message: \"a\"\n"
+                        + "    - minute: 60\n      message: \"b\"",
+                "reminders:\n  overtime:\n    enabled: \"maybe\"",
+                "reminders:\n  overtime:\n    every-minutes: 99999",
+                "reminders:\n  overtime:\n    message: 5",
+                "enforcement:\n  enabled: \"maybe\"",
+                "enforcement:\n  at-minutes: -1",
+                "enforcement:\n  kick-message: []",
+                "enforcement:\n  cooldown-minutes: 9999999999");
+
+        int seen = 0;
+        for (String yaml : malformed) {
+            List<String> warnings = parse(yaml).warnings();
+            assertFalse(warnings.isEmpty(), () -> "produced no warning at all:\n" + yaml);
+            for (String warning : warnings) {
+                seen++;
+                assertTrue(warning.matches("^(tracking|reminders|enforcement)\\.[a-z-]+.*"),
+                        "Every warning must open with the config key it is about, because "
+                                + "boot-test.sh matches on that shape: " + warning);
+            }
+        }
+        assertTrue(seen >= malformed.size(), "expected at least one warning per case");
+    }
+
     @ParameterizedTest(name = "a section that is a scalar ({0}) does not throw")
     @ValueSource(strings = {"tracking: 5", "reminders: 5", "enforcement: 5",
         "tracking:\n  afk: 5", "reminders:\n  overtime: 5"})

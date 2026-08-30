@@ -208,7 +208,18 @@ grep -q 'MiniMessage pipeline' server.log \
 
 grep -q 'Configuration loaded:' server.log || fail "The configuration never loaded."
 
-! grep -qE 'SessionPulse.*(is outside the supported range|Skipping it)' server.log \
+# Matched on the SHAPE of a warning, not on a list of the individual warning texts.
+# PluginConfig can emit a dozen different complaints and an alternation of phrases only
+# ever caught the two written into it, so a shipped config.yml that grew an unclosed tag
+# in `reminders.prefix` used to pass this leg while this very caption said it could not.
+#
+# Every warning the class emits opens with the config key it is about, so the marker is
+# a WARN line from this plugin naming one of the three top-level sections. That invariant
+# is enforced, not assumed: PluginConfigTest#everyWarningOpensWithTheKeyItIsAbout drives a
+# corpus of malformed files through PluginConfig and fails the build on any warning that
+# does not start with one of these three roots, so a new warning cannot escape this leg
+# without a red test first.
+! grep -qE 'WARN.*SessionPulse.*(tracking|reminders|enforcement)\.[a-z]' server.log \
     || fail "The SHIPPED config.yml produced a validation warning, so the file and the code defaults disagree."
 
 # THE relocation assertion, and the reason it is a real proof rather than a tautology:

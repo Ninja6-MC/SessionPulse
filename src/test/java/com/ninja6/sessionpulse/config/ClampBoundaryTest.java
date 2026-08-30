@@ -15,6 +15,7 @@ import java.util.function.ToIntFunction;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -118,6 +119,84 @@ class ClampBoundaryTest {
         PluginConfig config = ConfigFixture.parse("");
         assertEquals(clamp.def(), clamp.read().applyAsInt(config));
         assertEquals(List.of(), config.warnings());
+    }
+
+    // ------------------------------------------------------- values that are not numbers
+
+    /**
+     * The four shapes a scalar can take that {@code getInt} used to swallow.
+     *
+     * <p>{@code getInt} returns the fallback for anything that is not a {@link Number} and
+     * truncates a {@link Double}, so each of these read as the default with an empty
+     * warning list - a value the operator never wrote, used in silence, which is exactly
+     * what the class javadoc and the shipped config.yml header both promise cannot happen.
+     */
+    static Stream<Object> notWholeNumbers() {
+        return Stream.of("abc", Boolean.TRUE, List.of(1, 2), 8.7d);
+    }
+
+    @ParameterizedTest(name = "{0}: a value that is not a whole number falls back and is named")
+    @MethodSource("clamps")
+    void aValueThatIsNotAWholeNumberFallsBackAndIsNamed(Clamp clamp) {
+        notWholeNumbers().forEach(written -> {
+            PluginConfig config = with(clamp.key(), written);
+
+            assertEquals(clamp.def(), clamp.read().applyAsInt(config),
+                    () -> clamp.key() + " read " + written + " as something usable");
+            assertEquals(1, config.warnings().size(), () -> "warnings: " + config.warnings());
+            String warning = config.warnings().get(0);
+            assertTrue(warning.contains(clamp.key()), warning);
+            assertTrue(warning.contains("'" + written + "'"), warning);
+            assertTrue(warning.contains("not a whole number"), warning);
+            assertTrue(warning.contains("Using " + clamp.def() + " instead"), warning);
+        });
+    }
+
+    @ParameterizedTest(name = "{0}: a quoted number is still a number")
+    @MethodSource("clamps")
+    void aQuotedNumberIsStillANumber(Clamp clamp) {
+        PluginConfig config = with(clamp.key(), String.valueOf(clamp.def()));
+        assertEquals(clamp.def(), clamp.read().applyAsInt(config));
+        assertEquals(List.of(), config.warnings());
+    }
+
+    @ParameterizedTest(name = "{0}: a value too large for an int is clamped, not wrapped")
+    @MethodSource("clamps")
+    void aValueThatOverflowsIntIsClampedAndQuotedAsWritten(Clamp clamp) {
+        long written = 99_999_999_999_999L;
+        PluginConfig config = with(clamp.key(), written);
+
+        assertEquals(clamp.max(), clamp.read().applyAsInt(config));
+        String warning = config.warnings().get(0);
+        assertTrue(warning.contains(String.valueOf(written)),
+                () -> "the warning must quote what is in the file: " + warning);
+        assertTrue(warning.contains("Using " + clamp.max() + " instead"), warning);
+    }
+
+    @ParameterizedTest(name = "{0}: a value too small for an int is clamped, not wrapped")
+    @MethodSource("clamps")
+    void aValueThatUnderflowsIntIsClampedAndQuotedAsWritten(Clamp clamp) {
+        long written = -99_999_999_999_999L;
+        PluginConfig config = with(clamp.key(), written);
+
+        assertEquals(clamp.min(), clamp.read().applyAsInt(config));
+        String warning = config.warnings().get(0);
+        assertTrue(warning.contains(String.valueOf(written)), warning);
+        assertTrue(warning.contains("Using " + clamp.min() + " instead"), warning);
+    }
+
+    @Test
+    @DisplayName("the clamp warning never names the int the value wrapped round to")
+    void theClampWarningNeverNamesTheWrappedValue() {
+        // 99999999999999 narrowed with intValue() is 276447231, and that is the number the
+        // log used to print - one the operator would go looking for in their own file and
+        // never find.
+        PluginConfig config = with("tracking.window-reset-hours", 99_999_999_999_999L);
+
+        assertEquals(168, config.windowResetHours());
+        String warning = config.warnings().get(0);
+        assertTrue(warning.contains("99999999999999"), warning);
+        assertFalse(warning.contains("276447231"), warning);
     }
 
     @Test

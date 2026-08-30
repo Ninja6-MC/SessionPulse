@@ -154,7 +154,7 @@ public final class PluginConfig {
         this.milestones = readMilestones(config);
 
         this.overtime = new OvertimePolicy(
-                config.getBoolean("reminders.overtime.enabled", false),
+                flag(config, "reminders.overtime.enabled", false),
                 clamped(config, "reminders.overtime.after-minutes",
                         DEFAULT_OVERTIME_AFTER_MINUTES,
                         MIN_OVERTIME_AFTER_MINUTES, MAX_OVERTIME_AFTER_MINUTES),
@@ -164,7 +164,7 @@ public final class PluginConfig {
                 message(config, "reminders.overtime.message", DEFAULT_OVERTIME_MESSAGE));
 
         this.enforcement = new EnforcementPolicy(
-                config.getBoolean("enforcement.enabled", false),
+                flag(config, "enforcement.enabled", false),
                 clamped(config, "enforcement.at-minutes", DEFAULT_ENFORCEMENT_AT_MINUTES,
                         MIN_ENFORCEMENT_AT_MINUTES, MAX_ENFORCEMENT_AT_MINUTES),
                 message(config, "enforcement.kick-message", DEFAULT_KICK_MESSAGE),
@@ -182,15 +182,68 @@ public final class PluginConfig {
      *
      * <p>Both numbers appear in the warning, because the operator will read the value back
      * out of their own file and believe it. A value already in range is silent.
+     *
+     * <p>Reads the raw object rather than calling {@code getInt}, and both halves of that
+     * matter:
+     * <ul>
+     *   <li>{@code getInt} hands back the fallback for anything that is not a
+     *       {@link Number} - {@code abc}, {@code true}, a list - and truncates a decimal,
+     *       both with nothing in the log. That is the failure {@link #asInt} already
+     *       refuses for a milestone minute, and it is refused here for the same reason: a
+     *       value the operator did not write must never be used in silence;</li>
+     *   <li>{@code getInt} also calls {@code intValue()}, so {@code 99999999999999} arrives
+     *       already wrapped round to 276447231 and the clamp warning would quote a number
+     *       that appears nowhere in the operator's file. The comparison is done in
+     *       {@code long}, and the warning quotes the object as written, so what is named is
+     *       what they will find when they go and look.</li>
+     * </ul>
      */
     private int clamped(ConfigurationSection config, String key, int fallback, int min, int max) {
-        int configured = config.getInt(key, fallback);
-        int corrected = Math.max(min, Math.min(max, configured));
+        Object written = config.get(key);
+        if (written == null) {
+            return fallback;
+        }
+        Long configured = asLong(written);
+        if (configured == null) {
+            warnings.add(key + " is '" + written + "', which is not a whole number. Using "
+                    + fallback + " instead.");
+            return fallback;
+        }
+        long corrected = Math.max(min, Math.min(max, configured));
         if (corrected != configured) {
-            warnings.add(key + " is " + configured + ", which is outside the supported range "
+            warnings.add(key + " is " + written + ", which is outside the supported range "
                     + min + "-" + max + ". Using " + corrected + " instead.");
         }
-        return corrected;
+        return (int) corrected;
+    }
+
+    /**
+     * Reads a boolean and names a value that is neither true nor false.
+     *
+     * <p>{@code getBoolean} returns the fallback for anything that is not a
+     * {@link Boolean}, so {@code enabled: "maybe"} silently reads as off - the same defect
+     * as an unreadable int, on the two keys that decide whether a feature runs at all. A
+     * quoted {@code "true"} is accepted, because quoting is not the mistake this is
+     * catching; YAML resolves an unquoted {@code yes}/{@code no} to a Boolean by itself.
+     */
+    private boolean flag(ConfigurationSection config, String key, boolean fallback) {
+        Object written = config.get(key);
+        if (written == null) {
+            return fallback;
+        }
+        if (written instanceof Boolean value) {
+            return value;
+        }
+        String text = String.valueOf(written).trim();
+        if (text.equalsIgnoreCase("true")) {
+            return true;
+        }
+        if (text.equalsIgnoreCase("false")) {
+            return false;
+        }
+        warnings.add(key + " is '" + written + "', which is not true or false. Using "
+                + fallback + " instead.");
+        return fallback;
     }
 
     /**
@@ -228,8 +281,16 @@ public final class PluginConfig {
      * named.
      */
     private String message(ConfigurationSection config, String key, String fallback) {
-        String configured = config.getString(key);
-        if (configured == null) {
+        Object written = config.get(key);
+        if (written == null) {
+            return fallback;
+        }
+        // getString would stringify whatever it found, so `prefix: []` becomes the literal
+        // prefix "[]" and `prefix: 5` becomes "5", both with nothing in the log. Same rule
+        // as clamped(): a value nobody wrote is never used in silence.
+        if (!(written instanceof String configured)) {
+            warnings.add(key + " is '" + written + "', which is not text. Using the built-in "
+                    + "default instead: " + fallback);
             return fallback;
         }
         String problem = MessageCheck.problem(configured);
@@ -413,14 +474,43 @@ public final class PluginConfig {
      * instead.
      */
     private static Integer asInt(Object value) {
+        Long whole = asLong(value);
+        if (whole == null || whole != whole.intValue()) {
+            return null;
+        }
+        return whole.intValue();
+    }
+
+    /**
+     * A YAML scalar as a whole number, or {@code null} when it is not one.
+     *
+     * <p>The width is the point. {@link #clamped} compares against ranges that all fit in
+     * an int, but the value in the file need not, and narrowing before the comparison is
+     * what made {@code window-reset-hours: 99999999999999} report itself as 276447231.
+     *
+     * <p>An integral type is read through {@code longValue()} rather than through a double,
+     * because a {@code long} past 2^53 would not survive the round trip. Anything else -
+     * a {@code Double}, or a {@code BigInteger} past {@code Long.MAX_VALUE} - is checked
+     * for integrality and then saturated, which is harmless: the caller clamps it, and the
+     * warning quotes the object as written rather than this number.
+     */
+    private static Long asLong(Object value) {
+        if (value == null) {
+            return null;
+        }
         if (value instanceof Number number) {
-            if (number.doubleValue() != number.intValue()) {
+            if (number instanceof Integer || number instanceof Long
+                    || number instanceof Short || number instanceof Byte) {
+                return number.longValue();
+            }
+            double approximate = number.doubleValue();
+            if (!Double.isFinite(approximate) || approximate != Math.rint(approximate)) {
                 return null;
             }
-            return number.intValue();
+            return (long) approximate;
         }
         try {
-            return Integer.valueOf(String.valueOf(value).trim());
+            return Long.valueOf(String.valueOf(value).trim());
         } catch (NumberFormatException e) {
             return null;
         }
