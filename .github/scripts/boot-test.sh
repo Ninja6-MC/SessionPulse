@@ -197,6 +197,20 @@ grep -q 'MiniMessage pipeline' server.log \
 ! grep -qi 'Error occurred while disabling' server.log \
     || fail "Plugin threw during disable."
 
+# The configuration, on a real server rather than only in a unit test. These legs are
+# advisory - they run on every pull request but are not in main's required-check list - so
+# they are a signal, not a gate.
+#
+# The third line is the valuable one: it catches the SHIPPED config.yml drifting away from
+# the code defaults, which the unit tests can only compare file-to-file.
+[[ -f "plugins/SessionPulse/config.yml" ]] \
+    || fail "saveDefaultConfig() did not write config.yml - the resource is missing from the jar."
+
+grep -q 'Configuration loaded:' server.log || fail "The configuration never loaded."
+
+! grep -qE 'SessionPulse.*(is outside the supported range|Skipping it)' server.log \
+    || fail "The SHIPPED config.yml produced a validation warning, so the file and the code defaults disagree."
+
 # THE relocation assertion, and the reason it is a real proof rather than a tautology:
 # FoliaLib emits this itself, at SEVERE, when its own runtime package still begins
 # com.tcoded.folialib. It stores that prefix comma-separated and reassembles it at runtime

@@ -1,0 +1,139 @@
+# ==============================================================================
+# SessionPulse - gentle session health reminders, playtime tracking, and
+# optional session limits.
+#
+# Every value below carries its clamp range and the reason it exists. A value
+# outside its range is corrected to the nearest end of it and the correction is
+# named in the server log with both numbers, so nothing is quietly different
+# from what this file says.
+#
+# Everything here is MiniMessage, not legacy colour codes. See
+# https://docs.advntr.dev/minimessage/format.html
+#
+# CLOSE YOUR TAGS, AND CLOSE THEM IN ORDER. `<red><b>x</b></red>`, not
+# `<red><b>x</red></b>`, and not `<red>x` with nothing closing it. Those two -
+# a tag left open, and tags closed out of order - are the only MiniMessage
+# mistakes this plugin can detect, so they are the only ones it rejects. An
+# unknown tag such as `<bogus>` is not an error anywhere: MiniMessage renders it
+# as the literal text you typed. See the milestones block below for what
+# "rejects" means there.
+# ==============================================================================
+
+tracking:
+  # Hours a player must be offline before their counted window resets to zero.
+  # This is the setting that makes "four hours" mean four hours: milestones and
+  # enforcement read the counted window, never the current session, so a player
+  # cannot quit and rejoin for a fresh allowance. Clamped to 1-168.
+  # Below 1 an ordinary tea break would start a fresh window. Above 168 (a week)
+  # the window never resets in practice and this setting is a lie.
+  window-reset-hours: 8
+
+  afk:
+    # Whether, and how, the clock pauses for a player who has stopped playing.
+    # AUTO       - use EssentialsX if it is installed, otherwise the built-in
+    #              idle timer. The default, and the only value that stays
+    #              correct on a server whose plugin list changes later.
+    # ESSENTIALS - require EssentialsX. If it is absent, nobody is ever AFK.
+    #              Said once in the log at startup rather than assumed.
+    # BUILT_IN   - always use the idle timer below, even where EssentialsX is
+    #              installed.
+    # OFF        - never pause. A player who walks away accrues counted time.
+    #              The honest choice on a server that would rather not guess,
+    #              and the wrong one anywhere enforcement is on.
+    # An unrecognised value falls back to AUTO, named in the log.
+    mode: AUTO
+    # BUILT_IN only (and AUTO where EssentialsX is absent): seconds without
+    # input before a player is treated as idle. Clamped to 30-3600. Below 30,
+    # reading a sign counts as going AFK; above 3600 nobody is ever detected as
+    # idle before they log off anyway.
+    idle-seconds: 300
+
+  # Minutes between writes of every counted window to disk. Clamped to 1-60.
+  # This is what a server crash costs: at 5, at most five minutes of counted
+  # play is lost. Below 1 is disk traffic with nothing to buy - the numbers are
+  # a handful of scalars per player. Above 60 an hour of play can vanish.
+  flush-interval-minutes: 5
+
+reminders:
+  # Prepended to every chat message this plugin sends. Set to "" for none.
+  # Unlike a milestone, this cannot be skipped when it is malformed - it is the
+  # only one of its kind - so an unusable prefix falls back to this exact
+  # string and says so in the log.
+  prefix: "<gray>[<aqua>SessionPulse</aqua>]</gray> "
+
+  # One-time alerts, keyed by minute of the counted window. Any number of them:
+  # this is a list, and "any number" is literal.
+  #
+  # Every field except `minute` is optional, and an entry may use any
+  # combination of them. An entry with none of them at all is skipped, because
+  # it is a timer that fires into nothing.
+  #
+  # An entry is SKIPPED - never silently replaced with a default - when it has
+  # no minute, a minute that is not a whole number, a minute outside 1-10080, a
+  # minute another entry already uses, or a message/action-bar/title/subtitle
+  # that is not valid MiniMessage. Each skip is a warning in the server log
+  # naming the entry by its position in THIS LIST, counting from 1 and counting
+  # entries as they appear here, including the ones that were skipped. So
+  # "entry 3" is always the third `- minute:` block below, whatever happened to
+  # the first two.
+  #
+  # A minute is never clamped into range the way the numbers above are. There is
+  # no minute that could stand in for one you did not choose, and inventing one
+  # would fire an alert at every player who joins.
+  #
+  # Deleting this whole block is not the same as writing `milestones: []`. An
+  # absent block means "no preference expressed" and restores the two below.
+  # An empty list means "no milestones", and is honoured with no complaint.
+  #
+  # `sound` is a Bukkit sound name. An unknown one costs the sound and not the
+  # milestone: the entry still fires, silently, with a warning naming it.
+  milestones:
+    - minute: 60
+      message: "<aqua>You have been playing for an hour.</aqua> <gray>Stretch and drink some water.</gray>"
+      action-bar: "<aqua>1 hour</aqua>"
+      sound: BLOCK_NOTE_BLOCK_CHIME
+    - minute: 120
+      message: "<yellow>Two hours in.</yellow> <gray>Look at something 20 feet away for 20 seconds.</gray>"
+      title: "<yellow>Eye break</yellow>"
+      subtitle: "<gray>20 seconds, 20 feet</gray>"
+
+  # The repeating reminder that runs on after the one-time milestones above have
+  # all fired. The marathon safety net, not the ordinary path.
+  overtime:
+    # Off by default. A server that wants something said at 60 and 120 minutes
+    # uses milestones; this is for saying something for as long as somebody is
+    # still online.
+    enabled: false
+    # Counted-window minutes before the first overtime reminder. Clamped to
+    # 1-10080. Set it above your last milestone or the two will overlap.
+    after-minutes: 180
+    # Minutes between reminders after that. Clamped to 1-1440. The floor of 1 is
+    # not cosmetic: a 0 would schedule a reminder every tick. Above 1440 (a day)
+    # the recurring reminder recurs less often than most sessions last.
+    every-minutes: 30
+    # <hours> is replaced with the counted hours, to one decimal place. It is
+    # not a MiniMessage tag and MiniMessage leaves it alone, which is why it can
+    # be written plainly here.
+    message: "<red>You have been playing for <white><hours></white> hours.</red>"
+
+# The optional layer that ends a session rather than commenting on it.
+enforcement:
+  # Off by default, and this line is the README's promise kept in the file:
+  # "It never kicks anyone by default."
+  enabled: false
+  # Counted-window minutes at which the player is disconnected. Measured against
+  # the counted window, NOT the session - reading the session would let a player
+  # quit and rejoin for a fresh four hours, which is the whole reason the
+  # counted window exists. Clamped to 1-10080.
+  at-minutes: 240
+  # Shown on the disconnect screen. Minecraft's disconnect screen predates
+  # Adventure, so this is rendered through the legacy serializer: gradients and
+  # hover events will not survive, plain colours will. An unusable one falls
+  # back to the built-in default rather than disconnecting somebody with a
+  # blank screen.
+  kick-message: "<yellow>Time for a break.</yellow>"
+  # Minutes before the player may rejoin. Clamped to 1-1440. A 0 is not "no
+  # cooldown": the player would reconnect still over the limit and be kicked
+  # again, which is a boot loop. Set `enabled: false` to disable enforcement.
+  # The cooldown is persisted, so a server restart does not clear it.
+  cooldown-minutes: 30

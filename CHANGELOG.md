@@ -29,3 +29,14 @@ adheres to [Semantic Versioning](https://semver.org/).
   Adventure is not the copy Paper ships.
 - Boot legs in CI that enable and disable the plugin on Paper and Folia, and a build
   step that opens the packaged jar and proves the relocation applied.
+- `config/PluginConfig`, an immutable configuration snapshot, with the `Milestone`,
+  `OvertimePolicy`, `EnforcementPolicy` and `AfkMode` types it reads. A reload builds a
+  new snapshot and swaps the plugin's reference to it, so a long-lived service holds
+  `() -> config` rather than the object.
+- The default `config.yml`, shipped and commented: every value carries its clamp range
+  and the reason it exists. A scalar outside its range is clamped and the correction is
+  logged with both numbers; a milestone entry that cannot be used is skipped and named by
+  its position in the file, never replaced with a default. Nothing in configuration
+  loading throws, so a malformed file produces warnings and a working plugin.
+- Boot-test assertions that the shipped `config.yml` reaches the data folder and loads on
+  a real server without producing a single validation warning.
