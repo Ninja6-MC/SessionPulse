@@ -8,7 +8,7 @@ import java.util.zip.ZipFile
 
 plugins {
     `java-library`
-    id("com.gradleup.shadow") version "8.3.6"
+    id("com.gradleup.shadow") version "9.6.1"
 }
 
 group = "com.ninja6.sessionpulse"
@@ -49,7 +49,7 @@ val spigotApi = "org.spigotmc:spigot-api:1.20.4-R0.1-SNAPSHOT"
 // against and the first message send would throw NoSuchMethodError, with nothing at build
 // time to catch it. The BOM below is what makes that alignment a declaration rather than a
 // coincidence.
-val adventureApi = "4.21.0"
+val adventureApi = "5.2.0"
 val adventurePlatform = "4.4.1"
 
 // 0.5.1 and NOT 0.5.2, which also exists on repo.tcoded.com with a full checksum set.
@@ -87,7 +87,7 @@ dependencies {
     // would break that with no build-time signal.
 
     // Unit testing.
-    testImplementation(platform("org.junit:junit-bom:5.10.2"))
+    testImplementation(platform("org.junit:junit-bom:6.1.3"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
