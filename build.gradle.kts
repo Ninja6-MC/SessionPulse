@@ -1,3 +1,11 @@
+// FIRST line, and it has to be. The shadowJar verification block at the bottom opens the
+// built archive, and inside `tasks { shadowJar { } }` the Kotlin DSL resolves the bare
+// name `java` to the JavaPluginExtension accessor rather than to the root package - so a
+// fully-qualified `java.util.zip.ZipFile(...)` there fails to compile with "Unresolved
+// reference: util". A script-compilation failure fails every job in the workflow, not
+// just the one that would have run the check, so this import is load-bearing.
+import java.util.zip.ZipFile
+
 plugins {
     `java-library`
     id("com.gradleup.shadow") version "8.3.6"
@@ -34,6 +42,24 @@ repositories {
 // let a one-sided bump do exactly that.
 val spigotApi = "org.spigotmc:spigot-api:1.20.4-R0.1-SNAPSHOT"
 
+// The Adventure line, and the two literals must move together. adventure-platform-bukkit
+// 4.4.1 resolves adventure-api 4.21.0 - read off its published pom - so MiniMessage has to
+// be 4.21.0 and not the newest release. The current MiniMessage is 5.2.0, which resolves
+// adventure-api 5.2.0; Gradle would then hand BukkitAudiences an API it was not compiled
+// against and the first message send would throw NoSuchMethodError, with nothing at build
+// time to catch it. The BOM below is what makes that alignment a declaration rather than a
+// coincidence.
+val adventureApi = "4.21.0"
+val adventurePlatform = "4.4.1"
+
+// 0.5.1 and NOT 0.5.2, which also exists on repo.tcoded.com with a full checksum set.
+// 0.5.2 has no GitHub release and no git tag, and maven-metadata.xml still declares 0.5.1
+// as <release>. The two are not byte-identical - same entry names, but FoliaLib.class
+// differs - and what 0.5.2 adds is a better relocation diagnostic: it appends the jar's
+// CodeSource path to the SEVERE "not relocated correctly" message. Useful, not worth the
+// provenance. Revisit when it is tagged upstream.
+val foliaLib = "com.tcoded:FoliaLib:0.5.1"
+
 dependencies {
     // Spigot's API, NOT paper-api. Compiling against paper-api would let a Paper-only
     // method compile and then fail at runtime on Spigot with NoSuchMethodError,
@@ -41,6 +67,24 @@ dependencies {
     // is what makes the README's Spigot claim enforceable. 1.20.4 is in the 1.20
     // series declared as api-version in plugin.yml.
     compileOnly(spigotApi)
+
+    // implementation, NOT compileOnly, and this is the first place in this repository
+    // where the difference is load-bearing. shadowJar bundles the runtimeClasspath;
+    // compileOnly dependencies are not on it, so a compileOnly FoliaLib compiles clean and
+    // then throws NoClassDefFoundError on the first line of onEnable, on every platform,
+    // with nothing before the boot leg to catch it. The doLast block on shadowJar asserts
+    // named entries are PRESENT partly to catch exactly that slip.
+    implementation(platform("net.kyori:adventure-bom:$adventureApi"))
+    implementation(foliaLib)
+    implementation("net.kyori:adventure-platform-bukkit:$adventurePlatform")
+    implementation("net.kyori:adventure-text-minimessage")
+
+    // Do NOT exclude adventure-text-serializer-legacy from the shade. It arrives
+    // transitively through adventure-platform-bukkit, is relocated by the net.kyori rule
+    // along with everything else, and is what the two call sites Adventure cannot reach -
+    // AsyncPlayerPreLoginEvent#disallow and Player#kickPlayer, both String-only on
+    // spigot-api - will need when enforcement lands. A size-trimming pass that drops it
+    // would break that with no build-time signal.
 
     // Unit testing.
     testImplementation(platform("org.junit:junit-bom:5.10.2"))
@@ -87,11 +131,11 @@ tasks {
             events("passed", "skipped", "failed")
         }
 
-        // There are no test sources yet, so this task reports NO-SOURCE and none of the
-        // configuration below runs. Gradle 9 adds Test.failOnNoDiscoveredTests, defaulting
-        // to true: it does not apply to a NO-SOURCE task, but it does apply the moment a
-        // test source file exists that discovers nothing. Whoever bumps this wrapper past
-        // 8.x, or adds the first test file, should re-run `./gradlew test` deliberately.
+        // Test sources exist as of the scheduler seam, so this task now actually runs and
+        // the configuration below is live. Gradle 9 adds Test.failOnNoDiscoveredTests,
+        // defaulting to true, and it applies the moment a test source file exists that
+        // discovers nothing - so whoever bumps this wrapper past 8.x should re-run
+        // `./gradlew test` deliberately and read the counts rather than the exit code.
         //
         // A skipped test must fail the build, because in this project skipping is not
         // usually a choice. Copied from SpiralGenesis, where MockBukkit's
@@ -135,8 +179,153 @@ tasks {
     shadowJar {
         archiveBaseName.set("SessionPulse")
         archiveClassifier.set("")
-        // Nothing is bundled yet - the only dependency is compileOnly - so minimize()
-        // would have nothing to strip. The FoliaLib and Adventure relocations go here.
+
+        // DO NOT enable minimize(). This is not a size-versus-effort tradeoff that a
+        // future pass may reconsider - it is a correctness bug, and it would surface only
+        // on a running server.
+        //
+        // FoliaLib picks its platform implementation reflectively:
+        // FoliaLib#createServerImpl builds the class name from its own package plus
+        // ".impl." plus a String taken from ImplementationType, and calls Class.forName.
+        // Read the constant pool: FoliaImplementation, SpigotImplementation and the rest
+        // appear ONLY as String literals, with zero bytecode references anywhere. So
+        // minimize()'s reachability analysis sees every one of them as unreachable and
+        // strips them, and the plugin then dies on enable with FoliaLib's own
+        // IllegalStateException - on all four platforms, with no build-time signal.
+        //
+        // Adventure has the same shape: adventure-text-serializer-gson registers its
+        // providers through META-INF/services, which is a reflective edge minimize()
+        // cannot follow either.
+        //
+        // If size ever genuinely matters, the entry cost is
+        // `exclude(dependency("com.tcoded:FoliaLib"))` plus the same for every Adventure
+        // module that publishes a service file - and a full boot on all four platforms to
+        // prove it. Nothing less.
+
+        // REQUIRED, and easy to leave out because nothing fails at build time without it.
+        // shadow 8.3.6 registers NO transformers by default - ShadowJar.java initialises
+        // `transformers` to an empty list, and mergeServiceFiles() is the only thing that
+        // adds ServiceFileTransformer. Without it the two service files in
+        // adventure-text-serializer-gson
+        //   META-INF/services/net.kyori...JSONComponentSerializer$Provider
+        //   META-INF/services/net.kyori...DataComponentValueConverterRegistry$Provider
+        // are copied verbatim: their file NAME and their CONTENT keep the original
+        // net.kyori package while the classes they name have moved. Adventure's
+        // ServiceLoader lookup then finds nothing and throws at message-send time, not at
+        // enable. ServiceFileTransformer runs every relocator over both the path and each
+        // line of the body, which is exactly what is needed. Verified empirically here.
+        mergeServiceFiles()
+
+        // -------------------------------------------------------------------------
+        // Relocation. The org's first, so the reasoning is recorded rather than assumed.
+        // -------------------------------------------------------------------------
+        //
+        // com.tcoded.folialib -> ...lib.folialib
+        //   Not about Paper. FoliaLib is bundled by many plugins, and two plugins shipping
+        //   the same unrelocated com.tcoded.folialib means whichever loads first wins for
+        //   both. FoliaLib knows this and says so itself: it logs SEVERE "FoliaLib is not
+        //   relocated correctly!" when its own runtime package still begins
+        //   com.tcoded.folialib. It stores that prefix as the literal "com,tcoded,folialib,"
+        //   and replaces the commas at runtime precisely so that a shading tool's
+        //   string-constant remapping cannot quietly rewrite the check into passing. That
+        //   makes the absence of the warning in a server log a real runtime proof rather
+        //   than a tautology.
+        //
+        // net.kyori -> ...lib.kyori
+        //   The WHOLE net.kyori prefix, and deliberately wider than the two artifacts #19
+        //   names. Resolution pulls 17 net.kyori modules. Relocating only
+        //   adventure-platform-bukkit and adventure-text-minimessage would leave
+        //   adventure-api, adventure-key, adventure-nbt, the serializers,
+        //   adventure-platform-{api,facet} and net.kyori.examination sitting unrelocated at
+        //   net.kyori, alongside the copy Paper ships natively - which is the exact
+        //   collision the relocation exists to prevent.
+        //
+        //   The consequence is the constraint the notifier issue turns into a rule: our
+        //   Component is NOT Paper's Component, so player.sendMessage(Component) is a
+        //   runtime landmine on Paper. Every output call goes through BukkitAudiences, on
+        //   all four platforms.
+        //
+        //   net.kyori.examination and net.kyori.option fall under this single rule; do not
+        //   add rules for them. adventure-platform-bukkit 4.4.1 carries no dotted
+        //   "net.kyori" string constants at all, so there is no reflective lookup for
+        //   relocation to corrupt - that was a real bug once, fixed upstream in 4.3.4.
+        //
+        // NOT relocated: com.google.gson. adventure-text-serializer-gson excludes it from
+        // its own pom and expects the server to provide it, which every CraftBukkit-derived
+        // server does. There is no gson in this jar to relocate.
+        relocate("com.tcoded.folialib", "com.ninja6.sessionpulse.lib.folialib")
+        relocate("net.kyori", "com.ninja6.sessionpulse.lib.kyori")
+
+        // -------------------------------------------------------------------------
+        // Prove the relocation happened, rather than trusting that it did.
+        // -------------------------------------------------------------------------
+        // A relocation that silently did not apply produces a jar that builds green,
+        // uploads green, and then either collides with another plugin's FoliaLib or picks
+        // up Paper's Adventure - none of which the build would otherwise notice. So the
+        // jar is opened and read.
+        //
+        // This is a doLast on shadowJar, so it runs when shadowJar runs. A second `build`
+        // with nothing changed reports :shadowJar UP-TO-DATE and prints nothing; that is
+        // fine, because CI always builds clean. Do not read it as "checked on every build".
+        doLast {
+            val jar = archiveFile.get().asFile
+            ZipFile(jar).use { zip ->
+                val names = zip.entries().asSequence().map { it.name }.toList()
+
+                val leaked = names.filter {
+                    it.startsWith("com/tcoded/") || it.startsWith("net/kyori/")
+                }
+                if (leaked.isNotEmpty()) {
+                    throw GradleException(
+                        "Relocation did not apply. ${leaked.size} entry(s) still carry an " +
+                            "original package:" + System.lineSeparator() + "  - " +
+                            leaked.take(10).joinToString(System.lineSeparator() + "  - ")
+                    )
+                }
+
+                fun requireEntry(entry: String) {
+                    if (entry !in names) {
+                        throw GradleException("Expected relocated entry missing from the jar: $entry")
+                    }
+                }
+                // Positive assertions, because "no com/tcoded entries" is also true of a jar
+                // that bundled nothing at all - which is exactly what a compileOnly slip
+                // produces.
+                requireEntry("com/ninja6/sessionpulse/lib/folialib/FoliaLib.class")
+                requireEntry("com/ninja6/sessionpulse/lib/folialib/impl/FoliaImplementation.class")
+                requireEntry("com/ninja6/sessionpulse/lib/folialib/impl/SpigotImplementation.class")
+                requireEntry("com/ninja6/sessionpulse/lib/kyori/adventure/text/Component.class")
+                requireEntry("com/ninja6/sessionpulse/lib/kyori/adventure/platform/bukkit/BukkitAudiences.class")
+                requireEntry("com/ninja6/sessionpulse/lib/kyori/adventure/text/minimessage/MiniMessage.class")
+
+                // The service files are the half that fails silently at runtime, so they are
+                // checked by name AND by content.
+                val services = names.filter { it.startsWith("META-INF/services/") }
+                if (services.isEmpty()) {
+                    throw GradleException(
+                        "No META-INF/services entries in the jar at all. Adventure ships two; " +
+                            "their absence means the shade dropped them."
+                    )
+                }
+                val unrelocated = services.filter { it.contains("net.kyori") }
+                if (unrelocated.isNotEmpty()) {
+                    throw GradleException(
+                        "META-INF/services entries were not relocated - mergeServiceFiles() is " +
+                            "missing or ineffective: $unrelocated"
+                    )
+                }
+                services.forEach { path ->
+                    val body = zip.getInputStream(zip.getEntry(path)).bufferedReader().readText()
+                    if (body.contains("net.kyori")) {
+                        throw GradleException(
+                            "Service file $path still names an unrelocated class:" +
+                                System.lineSeparator() + body
+                        )
+                    }
+                }
+            }
+            logger.lifecycle("Relocation verified in ${jar.name}.")
+        }
     }
 
     build {
