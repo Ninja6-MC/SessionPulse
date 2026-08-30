@@ -117,3 +117,111 @@ jobs:
             !build/libs/*-javadoc.jar
           if-no-files-found: error
           retention-days: 7
+
+  # The scheduler issue's own Done-when, run in CI rather than asserted in a PR
+  # description: does a jar carrying a relocated FoliaLib and a relocated Adventure
+  # actually come up? The relocation is the highest-uncertainty decision in this
+  # milestone, and every issue after it is written against the assumption that it holds.
+  # Discovering otherwise at the smoke-matrix stage would be ten merges too late.
+  #
+  # Deliberately NOT added to main's required-check list in the pull request that
+  # introduces it. N6-CI-03: read the names off a real run first, and note that a matrix
+  # reports one context per leg.
+  boot:
+    name: Boot Test (${{ matrix.label }})
+    needs: build
+    runs-on: ubuntu-latest
+    # A hung JVM is caught by the script's own BOOT_TIMEOUT, but a hung download is not.
+    timeout-minutes: 25
+
+    strategy:
+      # Paper and Folia fail for different reasons, and seeing both results is the point.
+      fail-fast: false
+      matrix:
+        # Spigot is absent and that is not an oversight. Spigot publishes no server jar -
+        # BuildTools is the only route, it takes 10-25 minutes and 2GB, and its output may
+        # not be redistributed or cached publicly. The Spigot boot is a manual gate before
+        # merge, and whether it can become a CI leg at all is the smoke-test issue's
+        # question.
+        #
+        # Two Minecraft versions rather than one, because adventure-platform-bukkit's
+        # CraftBukkitFacet reflects into version-specific server internals: the 1.20.4 pair
+        # alone would prove the relocation only against the version the plugin compiles
+        # for. Both are real published Folia versions, checked against the v3 API - Folia
+        # publishes 1.19.4, 1.20.1/.2/.4/.6, 1.21.4/.5/.6/.8/.11, 26.1.2 and 26.2, so
+        # "1.21" and "26.1" are API bucket keys rather than versions and cannot be used
+        # here.
+        #
+        # No 26.x leg in this issue. Minecraft 26.1 and newer refuse to boot below Java
+        # 25, and adventure-platform-bukkit 4.4.1 predates them - it is expected to fall
+        # back to a legacy facet there rather than fail, which degrades MiniMessage output
+        # rather than breaking the boot. That is a real limitation of the four-platform
+        # claim on the newest servers, it needs measuring rather than guessing, and it
+        # belongs to the compatibility issues.
+        include:
+          - label: 'paper 1.20.4'
+            platform: paper
+            minecraft: '1.20.4'
+            java: '21'
+          - label: 'folia 1.20.4'
+            platform: folia
+            minecraft: '1.20.4'
+            java: '21'
+          - label: 'paper 1.21.11'
+            platform: paper
+            minecraft: '1.21.11'
+            java: '21'
+          - label: 'folia 1.21.11'
+            platform: folia
+            minecraft: '1.21.11'
+            java: '21'
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # `java` here is the version the SERVER runs on, not the one the plugin is built
+      # with. The jar stays Java 21 bytecode, which a newer runtime accepts.
+      - name: Set up Java ${{ matrix.java }}
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          java-version: ${{ matrix.java }}
+          distribution: 'temurin'
+
+      # The jar the build job already produced, rather than a second build. This is the
+      # artifact a release would ship, so it is the one that has to boot.
+      - name: Download Plugin Artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: SessionPulse-SNAPSHOT
+          path: dist
+
+      - name: Boot Server and Verify Plugin Loads
+        run: |
+          chmod +x .github/scripts/boot-test.sh
+          # The upload step's denylist already excludes the thin, sources and javadoc
+          # jars, so this yields exactly one file. The exclusions are repeated anyway: a
+          # future archive task that slipped past the denylist would otherwise be booted
+          # here at random.
+          JAR="$(find dist -name 'SessionPulse*.jar' ! -name '*-thin.jar' ! -name '*-sources.jar' ! -name '*-javadoc.jar' | head -1)"
+          # find exits 0 on no match, so without this an artifact that failed to download
+          # would invoke the script with an empty third argument and fail with a message
+          # about the wrong thing.
+          if [ -z "$JAR" ]; then
+            echo "::error::No plugin jar was downloaded from the build job's artifact."
+            exit 1
+          fi
+          echo "Booting with $JAR"
+          .github/scripts/boot-test.sh "${{ matrix.platform }}" "${{ matrix.minecraft }}" "$JAR"
+
+      # if: always(), because the log is most wanted on the runs that failed.
+      - name: Upload Server Log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: boot-log-${{ matrix.platform }}-${{ matrix.minecraft }}
+          path: run-${{ matrix.platform }}/server.log
+          retention-days: 7
+          if-no-files-found: warn

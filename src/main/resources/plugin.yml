@@ -9,8 +9,11 @@ api-version: '${apiVersion}'
 # build time to catch it.
 description: '${description}'
 author: Ninja6-MC
-# `folia-supported: true` is deliberately absent. The flag is a claim about the
-# scheduler call sites in the source, and there are none yet. It lands with FoliaLib.
+# The claim is now true: every scheduler call site in the plugin goes through
+# platform/Scheduler, and the only class naming the library is FoliaLibScheduler. Folia
+# refuses a plugin without this flag and says so in the log ("not marked as supporting
+# Folia"), which the boot leg asserts on.
+folia-supported: true
 
 commands:
   spulse:
