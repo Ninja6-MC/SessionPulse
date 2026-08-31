@@ -58,9 +58,12 @@ updates:
       interval: weekly
       day: monday
     # Majors are split from minors and patches for the same reason the actions groups
-    # are, and it matters concretely here: com.gradleup.shadow 9.x exists on the plugin
-    # portal and requires Gradle 9, so an unsegregated group would propose a bump that
-    # cannot build on an 8.10.2 wrapper.
+    # are, and this repository has already paid for it: com.gradleup.shadow 9.x requires
+    # Gradle 9, and the wrapper is a manual bump this file does not cover (see the note
+    # at the end of this block). While the wrapper sat at 8.10.2 an unsegregated group
+    # would have proposed a shadow bump that could not build at all. The wrapper is on
+    # 9.7.1 now and that particular pairing is resolved, but the shape recurs: a Gradle
+    # major always lands here before the wrapper that supports it does.
     groups:
       gradle:
         applies-to: version-updates
