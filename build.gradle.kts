@@ -49,7 +49,7 @@ val spigotApi = "org.spigotmc:spigot-api:1.20.4-R0.1-SNAPSHOT"
 // against and the first message send would throw NoSuchMethodError, with nothing at build
 // time to catch it. The BOM below is what makes that alignment a declaration rather than a
 // coincidence.
-val adventureApi = "4.21.0"
+val adventureApi = "4.26.1"
 val adventurePlatform = "4.4.1"
 
 // 0.5.1 and NOT 0.5.2, which also exists on repo.tcoded.com with a full checksum set.
