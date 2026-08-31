@@ -97,11 +97,19 @@ updates:
       # MiniMessage round trip is dead. `Build and Test` goes green on it. Pull request
       # 39 was exactly this, caught by the boot legs and nothing else.
       #
+      # Matched by PREFIX, not by artifact, and that is the second lesson rather than a
+      # stylistic choice. This ignore first named adventure-api and
+      # adventure-text-minimessage, which is what the imports say - and Dependabot opened
+      # pull request 44 the same day, against `net.kyori:adventure-bom`. The version is
+      # declared once, on the BOM, so the BOM is the only net.kyori coordinate that
+      # carries a version literal at all and the only one a bot can raise. Naming
+      # artifacts guards the names a human reads; the wildcard guards the whole line
+      # however the version is declared, which survives someone later inlining a version
+      # or adding a serializer.
+      #
       # Lift this the day an adventure-platform 5.x is published, and bump both literals
       # in build.gradle.kts in the same commit.
-      - dependency-name: net.kyori:adventure-api
-        update-types: ["version-update:semver-major"]
-      - dependency-name: net.kyori:adventure-text-minimessage
+      - dependency-name: "net.kyori:*"
         update-types: ["version-update:semver-major"]
     commit-message:
       # `build` rather than `ci`: ci is the Conventional Commits type for workflow
