@@ -18,16 +18,20 @@ import java.util.stream.Stream;
  * called from exactly one method" - so they are checked by reading it. Gradle sets the
  * test task's working directory to the project directory, which is what makes the
  * relative path below correct.
+ *
+ * <p>{@code public} rather than package-private only so that the source-scanning tests in
+ * other packages - the clock seam and the session tick - reuse this walker instead of
+ * copying it. Test-only visibility; no production code is affected.
  */
-final class SourceTree {
+public final class SourceTree {
 
     private SourceTree() {
     }
 
-    static final Path MAIN_JAVA = Path.of("src", "main", "java");
+    public static final Path MAIN_JAVA = Path.of("src", "main", "java");
 
     /** Every {@code .java} file under {@code src/main/java}. */
-    static List<Path> mainSources() {
+    public static List<Path> mainSources() {
         try (Stream<Path> walk = Files.walk(MAIN_JAVA)) {
             return walk.filter(Files::isRegularFile)
                 .filter(p -> p.getFileName().toString().endsWith(".java"))
@@ -40,7 +44,7 @@ final class SourceTree {
         }
     }
 
-    static String read(Path path) {
+    public static String read(Path path) {
         try {
             return Files.readString(path, StandardCharsets.UTF_8);
         } catch (IOException e) {
@@ -60,7 +64,7 @@ final class SourceTree {
      * result still line up with the original, which is what lets the brace-depth scan
      * below report a usable position.
      */
-    static String stripCommentsAndStrings(String source) {
+    public static String stripCommentsAndStrings(String source) {
         char[] out = source.toCharArray();
         int i = 0;
         int n = out.length;
