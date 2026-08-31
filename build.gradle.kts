@@ -8,7 +8,7 @@ import java.util.zip.ZipFile
 
 plugins {
     `java-library`
-    id("com.gradleup.shadow") version "8.3.6"
+    id("com.gradleup.shadow") version "9.6.1"
 }
 
 group = "com.ninja6.sessionpulse"
@@ -87,7 +87,7 @@ dependencies {
     // would break that with no build-time signal.
 
     // Unit testing.
-    testImplementation(platform("org.junit:junit-bom:5.10.2"))
+    testImplementation(platform("org.junit:junit-bom:6.1.3"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
@@ -132,16 +132,22 @@ tasks {
         }
 
         // Test sources exist as of the scheduler seam, so this task now actually runs and
-        // the configuration below is live. Gradle 9 adds Test.failOnNoDiscoveredTests,
-        // defaulting to true, and it applies the moment a test source file exists that
-        // discovers nothing - so whoever bumps this wrapper past 8.x should re-run
-        // `./gradlew test` deliberately and read the counts rather than the exit code.
+        // the configuration below is live. Gradle 9 is here and Test.failOnNoDiscoveredTests
+        // does default to true - read back off the live task on 9.7.1, not assumed - so a
+        // test source set that compiles but discovers nothing now fails instead of passing
+        // silently. It is satisfied: 145 tests are discovered and run. Read the counts, not
+        // the exit code, whenever the JUnit platform or its engine moves.
         //
         // A skipped test must fail the build, because in this project skipping is not
         // usually a choice. Copied from SpiralGenesis, where MockBukkit's
         // UnimplementedOperationException extends TestAbortedException and so reports as
         // SKIPPED while the build still succeeds - indistinguishable from coverage, which
         // is the one thing test results are for.
+        //
+        // addTestListener is still present and still un-deprecated on Gradle 9.7.1 -
+        // checked by reflection against the live task and by a full `--warning-mode all`
+        // build, which reports no deprecation for it. If it ever does go, whatever
+        // replaces it must keep this exact guarantee: a SKIPPED test fails the build.
         val skipped = mutableListOf<String>()
         addTestListener(object : TestListener {
             override fun beforeSuite(suite: TestDescriptor) {}
@@ -167,11 +173,15 @@ tasks {
         }
     }
 
-    // shadowJar owns the canonical archive name, so the thin jar needs its own.
-    // `assemble` runs :jar but not :shadowJar, so without this the thin jar lands at the
-    // exact path the release pipeline and scripts/dev-server.sh pick up - which would
-    // silently ship a plugin missing its bundled dependencies once the FoliaLib and
-    // Adventure relocations land.
+    // shadowJar owns the canonical archive name, so the thin jar needs its own. Still
+    // required on shadow 9, but for a different reason than on shadow 8, and the old one
+    // is now wrong: shadow 9 makes `assemble` depend on :shadowJar, so `assemble` no
+    // longer leaves a thin jar behind where the plugin jar belongs. What it does instead
+    // is run :jar AND :shadowJar in the same invocation, and without this classifier both
+    // declare the identical output path - two tasks writing one file, with only task
+    // ordering deciding which one survives. Verified by removing the classifier on 9.6.1:
+    // the build still succeeds and :shadowJar happens to run second, which is precisely
+    // the kind of accident that holds until it does not.
     jar {
         archiveClassifier.set("thin")
     }
@@ -203,9 +213,9 @@ tasks {
         // prove it. Nothing less.
 
         // REQUIRED, and easy to leave out because nothing fails at build time without it.
-        // shadow 8.3.6 registers NO transformers by default - ShadowJar.java initialises
-        // `transformers` to an empty list, and mergeServiceFiles() is the only thing that
-        // adds ServiceFileTransformer. Without it the two service files in
+        // shadow registers NO transformers by default - true on 8.3.6 and still true on
+        // 9.6.1 - and mergeServiceFiles() is the only thing that adds
+        // ServiceFileTransformer. Without it the two service files in
         // adventure-text-serializer-gson
         //   META-INF/services/net.kyori...JSONComponentSerializer$Provider
         //   META-INF/services/net.kyori...DataComponentValueConverterRegistry$Provider
@@ -214,6 +224,17 @@ tasks {
         // ServiceLoader lookup then finds nothing and throws at message-send time, not at
         // enable. ServiceFileTransformer runs every relocator over both the path and each
         // line of the body, which is exactly what is needed. Verified empirically here.
+        //
+        // The duplicatesStrategy line is shadow 9's addition and is not cosmetic. shadow 9
+        // defaults shadowJar to EXCLUDE and then warns, by name, that a file matched by a
+        // transformer under EXCLUDE may have its duplicates dropped BEFORE the transformer
+        // ever sees them - which for ServiceFileTransformer means a second module's copy of
+        // a service file is discarded rather than merged into the first. Today each of the
+        // two Adventure service files comes from one artifact, so nothing is being dropped:
+        // setting INCLUDE produced a byte-for-byte identical entry list, 843 entries either
+        // way. It is set so that the day a second module publishes the same service file,
+        // the transformer merges it instead of the copy task silently winning.
+        duplicatesStrategy = DuplicatesStrategy.INCLUDE
         mergeServiceFiles()
 
         // -------------------------------------------------------------------------
@@ -328,6 +349,12 @@ tasks {
         }
     }
 
+    // Redundant on shadow 9, and kept deliberately rather than by inertia: shadow 9 wires
+    // :assemble -> :shadowJar itself, and :build depends on :assemble, so `./gradlew build`
+    // reaches shadowJar with or without this line. It stays as the explicit statement that
+    // a `build` which did not produce the shaded jar is not a build of this project - a
+    // guarantee currently held by a third-party plugin's task wiring, one minor release
+    // away from moving.
     build {
         dependsOn(shadowJar)
     }

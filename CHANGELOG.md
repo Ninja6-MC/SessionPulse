@@ -9,7 +9,7 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 - Initial project scaffolding and repository setup.
-- Gradle build: Java 21 toolchain, Shadow, `spigot-api` compile target, JUnit 5,
+- Gradle build: Java 21 toolchain, Shadow, `spigot-api` compile target, JUnit 6,
   and `processResources` templating of `plugin.yml`.
 - `plugin.yml` declaring `/spulse` (alias `/sessionpulse`) and the
   `sessionpulse.use`, `sessionpulse.admin` and `sessionpulse.exempt` permission
