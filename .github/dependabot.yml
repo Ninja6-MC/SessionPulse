@@ -81,6 +81,25 @@ updates:
       # raising it narrows the supported range silently. Changed by hand, with the
       # api-version in plugin.yml changed in the same commit.
       - dependency-name: org.spigotmc:spigot-api
+      # Adventure follows adventure-platform-bukkit, not the newest adventure-api, and a
+      # bot cannot know that. Every message this plugin sends goes through
+      # BukkitAudiences, which ships in the adventure-platform line - and that line stops
+      # at 4.4.1, which pins adventure-platform-api 4.4.1 and is built against
+      # adventure-api 4.x. There is no adventure-platform 5.x at all, so there is no
+      # combination in which adventure-api 5.x and BukkitAudiences both work.
+      #
+      # This is ignored rather than closed once because the failure is quiet and
+      # expensive. Raising adventure-api alone still COMPILES and still ENABLES: the
+      # plugin boots, picks its scheduler and shuts down cleanly, and only the
+      # MiniMessage round trip is dead. `Build and Test` goes green on it. Pull request
+      # 39 was exactly this, caught by the boot legs and nothing else.
+      #
+      # Lift this the day an adventure-platform 5.x is published, and bump both literals
+      # in build.gradle.kts in the same commit.
+      - dependency-name: net.kyori:adventure-api
+        update-types: ["version-update:semver-major"]
+      - dependency-name: net.kyori:adventure-text-minimessage
+        update-types: ["version-update:semver-major"]
     commit-message:
       # `build` rather than `ci`: ci is the Conventional Commits type for workflow
       # actions, build is the one for build-system dependencies.
