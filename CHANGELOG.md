@@ -40,3 +40,10 @@ adheres to [Semantic Versioning](https://semver.org/).
   loading throws, so a malformed file produces warnings and a working plugin.
 - Boot-test assertions that the shipped `config.yml` reaches the data folder and loads on
   a real server without producing a single validation warning.
+- `session/SessionTracker` and the counted window: active seconds that accumulate across
+  sessions and reset only after a player has been offline longer than
+  `tracking.window-reset-hours`. Milestones and enforcement read the window rather than the
+  current session, so quitting and rejoining cannot buy a fresh allowance. Lifetime playtime
+  is a separate total that never resets. In-session time is measured monotonically and
+  everything persisted is wall clock, because `System.nanoTime()` has no meaning across a
+  restart.
