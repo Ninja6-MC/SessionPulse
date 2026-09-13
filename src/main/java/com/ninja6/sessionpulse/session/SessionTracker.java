@@ -173,8 +173,8 @@ public final class SessionTracker {
      * <p>A player quitting while AFK contributes no tail, consistent with the tick rule.
      *
      * <p>This method saves, rather than returning the snapshot for a caller to save. The
-     * store is wired in one place - here - so that swapping {@link SessionStore#EMPTY} for
-     * a real implementation cannot land on the load path and miss the save path.
+     * store is wired in one place - here - so that swapping one store for another cannot
+     * land on the load path and miss the save path.
      *
      * @param uuid the player
      * @return what was stored, or {@code null} if they were not being tracked

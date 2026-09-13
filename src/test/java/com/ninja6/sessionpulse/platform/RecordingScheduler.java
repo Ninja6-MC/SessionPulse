@@ -1,6 +1,7 @@
 package com.ninja6.sessionpulse.platform;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import org.bukkit.entity.Entity;
 
@@ -8,22 +9,23 @@ import org.bukkit.entity.Entity;
  * A {@link Scheduler} that records rather than schedules, and runs what it is given only
  * when a test asks it to.
  *
- * <p>It proves little on its own today. It is written here, with the seam, because every
- * issue from the session tracker onward schedules through {@code Scheduler} and will need
- * exactly this fixture - and because a seam whose test double is awkward to write is
- * usually a seam that is shaped wrong. This one took two lists, which is the answer the
- * exercise was looking for.
+ * <p>It is written here, with the seam, because every issue from the session tracker
+ * onward schedules through {@code Scheduler} and needs exactly this fixture - and because a
+ * seam whose test double is awkward to write is usually a seam that is shaped wrong.
+ *
+ * <p>{@code public} so the storage tests in their own package can drive it. Test-only
+ * visibility, the same reasoning as {@code SourceTree}; no production code is affected.
  */
-final class RecordingScheduler implements Scheduler {
+public final class RecordingScheduler implements Scheduler {
 
     /** One scheduled repeating task, and whether it is still live. */
-    static final class Recorded implements Task {
+    public static final class Recorded implements Task {
 
-        final Runnable body;
-        final long delayTicks;
-        final long periodTicks;
-        final boolean async;
-        int runs;
+        public final Runnable body;
+        public final long delayTicks;
+        public final long periodTicks;
+        public final boolean async;
+        public int runs;
         private boolean cancelled;
 
         Recorded(Runnable body, long delayTicks, long periodTicks, boolean async) {
@@ -44,8 +46,21 @@ final class RecordingScheduler implements Scheduler {
         }
     }
 
-    final List<Recorded> scheduled = new ArrayList<>();
-    final List<Entity> entityTargets = new ArrayList<>();
+    public final List<Recorded> scheduled = new ArrayList<>();
+    public final List<Entity> entityTargets = new ArrayList<>();
+
+    /**
+     * One-shots waiting for {@link #runOnce()}, oldest first.
+     *
+     * <p>Kept apart from {@link #scheduled}: a one-shot queued from inside a repeating
+     * task would otherwise be appended to the list {@link #tick()} is iterating. Synchronized
+     * because storage requests a flush from whichever thread wrote, and a concurrency test
+     * drives several at once.
+     */
+    public final List<Runnable> once = Collections.synchronizedList(new ArrayList<>());
+
+    public RecordingScheduler() {
+    }
 
     @Override
     public Task globalRepeating(Runnable task, long delayTicks, long periodTicks) {
@@ -67,13 +82,36 @@ final class RecordingScheduler implements Scheduler {
         return recorded;
     }
 
+    @Override
+    public void asyncOnce(Runnable task) {
+        once.add(task);
+    }
+
     /** Runs one tick: every task that has not been cancelled fires once. */
-    void tick() {
+    public void tick() {
         for (Recorded recorded : scheduled) {
             if (!recorded.isCancelled()) {
                 recorded.runs++;
                 recorded.body.run();
             }
         }
+    }
+
+    /**
+     * Runs every one-shot queued so far, on the calling thread.
+     *
+     * <p>A one-shot queued while these run is left queued for the next call, which is what
+     * lets a test see that a write landing during a flush asked for a flush of its own.
+     *
+     * @return how many ran
+     */
+    public int runOnce() {
+        List<Runnable> batch;
+        synchronized (once) {
+            batch = new ArrayList<>(once);
+            once.clear();
+        }
+        batch.forEach(Runnable::run);
+        return batch.size();
     }
 }

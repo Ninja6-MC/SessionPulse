@@ -6,21 +6,25 @@ import com.ninja6.sessionpulse.platform.FoliaLibScheduler;
 import com.ninja6.sessionpulse.platform.Scheduler;
 import com.ninja6.sessionpulse.session.AfkGate;
 import com.ninja6.sessionpulse.session.SessionClock;
-import com.ninja6.sessionpulse.session.SessionStore;
+import com.ninja6.sessionpulse.session.PlayerSession;
 import com.ninja6.sessionpulse.session.SessionTickTask;
 import com.ninja6.sessionpulse.session.SessionTracker;
+import com.ninja6.sessionpulse.storage.DataStorage;
+import com.ninja6.sessionpulse.storage.YamlDataStorage;
 import net.kyori.adventure.platform.bukkit.BukkitAudiences;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Plugin lifecycle entrypoint for SessionPulse.
  *
- * <p>It owns the two things that have to outlive a single call and be torn down in a
- * defined order: the scheduler seam, and the audience provider that is the plugin's only
+ * <p>It owns the things that have to outlive a single call and be torn down in a defined
+ * order: the scheduler seam, storage, and the audience provider that is the plugin's only
  * route to a player's screen. The command declared in {@code plugin.yml} still has no
  * executor, so {@code /spulse} prints its usage string until the command issue lands.
  */
@@ -50,6 +54,14 @@ public class SessionPulsePlugin extends JavaPlugin {
     private SessionTracker tracker;
 
     /**
+     * Held by its concrete type, for the same reason as {@link #scheduler}: loading,
+     * starting the flush and the final synchronous write are not on {@link DataStorage},
+     * so this class is the only place that can reach them. {@link #storage()} hands out the
+     * interface.
+     */
+    private YamlDataStorage storage;
+
+    /**
      * The session tick, held by its handle rather than cancelled in bulk.
      *
      * <p>{@code /spulse reload} has to cancel and reschedule this one task individually.
@@ -76,9 +88,16 @@ public class SessionPulsePlugin extends JavaPlugin {
         // second.
         this.audiences = BukkitAudiences.create(this);
 
+        // Read before the tracker exists and before any player is seeded: a player seeded
+        // against an empty store is handed a fresh window, and nothing corrects it later.
+        // The one deliberate read on the main thread; see YamlDataStorage.
+        this.storage = new YamlDataStorage(getDataFolder().toPath().resolve("data.yml"),
+                scheduler, this::config, getLogger());
+        storage.loadFromDisk();
+
         // this::config, never the object. A captured snapshot would keep the tracker on the
         // previous file's window-reset-hours for ever after a reload.
-        this.tracker = new SessionTracker(this::config, SessionClock.system(), SessionStore.EMPTY);
+        this.tracker = new SessionTracker(this::config, SessionClock.system(), storage);
 
         // BEFORE registerEvents, and the order is load-bearing. Players are already online
         // whenever the plugin is enabled by a plugin manager rather than at boot; without
@@ -90,7 +109,11 @@ public class SessionPulsePlugin extends JavaPlugin {
             tracker.onJoin(online.getUniqueId(), online.getName());
         }
         getServer().getPluginManager()
-                .registerEvents(new PlayerConnectionListener(tracker), this);
+                .registerEvents(new PlayerConnectionListener(tracker, storage::flushAsync), this);
+
+        // tracker::snapshotAll is the heartbeat: every periodic flush re-stamps last-seen
+        // for everyone still online, so a crash cannot leave it hours stale.
+        storage.startFlushing(tracker::snapshotAll);
 
         // AfkGate.NEVER and no observers: this issue counts time and puts nothing on
         // anybody's screen. The AFK issue supplies the real gate; the reminder issues
@@ -125,9 +148,24 @@ public class SessionPulsePlugin extends JavaPlugin {
         }
         // Nulled after the tasks are stopped, not before: the handle is only meaningful
         // while the scheduler is alive, and the blanket cancel above has already stopped it.
-        // When storage lands, the final synchronous save goes here - after the tick has
-        // stopped, before the audience closes.
         this.sessionTick = null;
+
+        // After the tick has stopped, before the audience closes. A server stopping does not
+        // deliver a quit event for the players still online, and neither does a plugin
+        // manager disabling this plugin, so their sessions are finalised here or lost. Then
+        // the one synchronous write: async work submitted during onDisable has no guarantee
+        // of running.
+        if (storage != null) {
+            if (tracker != null) {
+                List<UUID> online = new ArrayList<>();
+                for (PlayerSession session : tracker.sessions()) {
+                    online.add(session.uuid());
+                }
+                online.forEach(tracker::onQuit);
+            }
+            storage.shutdown();
+            storage = null;
+        }
         this.tracker = null;
         if (audiences != null) {
             audiences.close();
@@ -164,7 +202,8 @@ public class SessionPulsePlugin extends JavaPlugin {
      *
      * <p>Does NOT call {@code Scheduler#cancelAll}. That is disable-only: cancelling every
      * task here would kill the session tick and the plugin would silently stop counting.
-     * The reload issue re-schedules the flush and tick tasks by their own handles.
+     * The reload issue re-schedules the flush and tick tasks by their own handles - the
+     * flush through {@link DataStorage#rescheduleFlush()}.
      */
     public void reload() {
         reloadConfig();
@@ -213,5 +252,17 @@ public class SessionPulsePlugin extends JavaPlugin {
      */
     public SessionTracker tracker() {
         return tracker;
+    }
+
+    /**
+     * Persistent player state.
+     *
+     * <p>Returns {@link DataStorage}, which has no way to write the file, so no later issue
+     * can put a disk write on the main thread through it.
+     *
+     * @return the store, or {@code null} once the plugin has been disabled
+     */
+    public DataStorage storage() {
+        return storage;
     }
 }

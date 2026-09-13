@@ -19,7 +19,8 @@ import org.bukkit.entity.Entity;
  * is simply gone. Keeping the blanket cancel off this interface and on the concrete
  * {@code FoliaLibScheduler}, which only {@code SessionPulsePlugin} holds by concrete type,
  * turns that mistake into a compile error instead of something a reviewer has to catch.
- * This is a deliberate departure from the four-method list in the issue.
+ * This is a deliberate departure from the scheduler issue, which listed a blanket cancel
+ * among the seam's methods.
  */
 public interface Scheduler {
 
@@ -83,4 +84,19 @@ public interface Scheduler {
      * @return the handle, which is the only way to stop it
      */
     Task async(Runnable task, long delayTicks, long periodTicks);
+
+    /**
+     * Runs a task once, off the server thread, at the next opportunity.
+     *
+     * <p>Nothing scheduled here may touch Bukkit state. Its use in this plugin is the
+     * forced storage flush after a quit or a cooldown, which cannot wait for the periodic
+     * one.
+     *
+     * <p>Returns nothing, for the same reason {@link #entity} does: the task runs once, and
+     * there is nothing meaningful to cancel. The task handles its own exceptions; whatever
+     * escapes it is reported by the server, not by the code that asked for the run.
+     *
+     * @param task what to run
+     */
+    void asyncOnce(Runnable task);
 }

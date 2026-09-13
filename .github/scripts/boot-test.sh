@@ -208,6 +208,18 @@ grep -q 'MiniMessage pipeline' server.log \
 
 grep -q 'Configuration loaded:' server.log || fail "The configuration never loaded."
 
+# Storage, on a real server. The loaded line is logged whether or not data.yml exists yet,
+# so it proves the read at enable ran, not that a file was found.
+grep -q 'Storage loaded:' server.log || fail "Storage never loaded."
+
+# Nobody joins, so nothing is dirty - but shutdown writes unconditionally, which is what
+# makes the file's presence after the graceful stop proof that the final synchronous save
+# ran rather than being skipped or lost to a cancelled async task.
+[[ -f "plugins/SessionPulse/data.yml" ]] \
+    || fail "data.yml was not written at shutdown - the final synchronous save did not run."
+
+! grep -q 'Failed to save' server.log || fail "Storage failed to write data.yml."
+
 # Matched on the SHAPE of a warning, not on a list of the individual warning texts.
 # PluginConfig can emit a dozen different complaints and an alternation of phrases only
 # ever caught the two written into it, so a shipped config.yml that grew an unclosed tag
