@@ -17,8 +17,9 @@
 #
 # Exits non-zero if the server fails to start, the plugin fails to enable or disable, the
 # server rejects the plugin, storage does not load or data.yml is not written at shutdown,
-# or the log carries a linkage error, a failed save or a stack trace naming our package. The full server log is left at $WORKDIR/server.log for the caller to
-# upload as an artifact.
+# or the log carries a linkage error, a failed save or a stack trace naming our package.
+# The full server log is left at $WORKDIR/server.log for the caller to upload as an
+# artifact.
 
 set -euo pipefail
 

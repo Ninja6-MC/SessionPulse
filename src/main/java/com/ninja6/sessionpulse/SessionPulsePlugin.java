@@ -141,9 +141,10 @@ public class SessionPulsePlugin extends JavaPlugin {
     @Override
     public void onDisable() {
         // Listeners before anything else. On Folia a quit runs on a region thread and can
-        // land at any point below; unregistered, it cannot reach a store that is closing and
-        // drop its save, or ask a disabled plugin's scheduler for a flush. Bukkit would
-        // unregister them anyway, but only after this method returns.
+        // land at any point below. Unregistering stops any further quit from being
+        // dispatched here, which narrows the window in which one reaches a store that is
+        // closing and drops its save; a handler already running on another thread can still
+        // get there. Bukkit would unregister them anyway, but only after this method returns.
         HandlerList.unregisterAll(this);
 
         // Order matters. Tasks next: a tick still running while the audience closes would

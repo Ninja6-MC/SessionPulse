@@ -17,7 +17,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
@@ -72,7 +75,7 @@ import java.util.logging.Logger;
  *
  * <h2>Locks</h2>
  *
- * <p>Two, and neither is ever held while touching {@link #records}:
+ * <p>Three, and none is ever held while touching {@link #records}:
  *
  * <ul>
  *   <li>The YAML guard protects the in-memory document. Writers take it inside
@@ -82,11 +85,12 @@ import java.util.logging.Logger;
  *   <li>The disk lock orders whole flushes: serialise, then write. Without it two flushes
  *       can serialise in one order and reach the disk in the other, leaving the older file
  *       in place with nothing marked dirty to repair it.</li>
+ *   <li>The task lock guards only the periodic flush's handle and the stopped flag. It is
+ *       never held across I/O or while another lock is taken, so a reload rescheduling the
+ *       flush never waits on the disk.</li>
  * </ul>
  *
- * <p>Allowed nesting is map bin lock then YAML guard, and disk lock then YAML guard. A
- * third, small lock guards only the periodic task's handle; it is never held across I/O or
- * while another lock is taken, so a reload rescheduling the flush never waits on the disk.
+ * <p>Allowed nesting is map bin lock then YAML guard, and disk lock then YAML guard.
  *
  * <h2>Accepted limitations</h2>
  *
@@ -119,8 +123,9 @@ public final class YamlDataStorage implements DataStorage {
 
     private static final long TICKS_PER_MINUTE = 1_200L;
 
-    private static final String MISSHAPEN = "has player entries that could not be read (see "
-            + "the warnings above); the others were kept";
+    private static final String MISSHAPEN = "has player entries that could not be read or "
+            + "are not in canonical form (see the warnings above); they are repaired in memory "
+            + "and the next flush writes the repair";
 
     /**
      * Puts serialised text on disk.
@@ -208,10 +213,12 @@ public final class YamlDataStorage implements DataStorage {
      *   <li>A blank file is set aside the same way. This plugin never writes one, so a
      *       blank file is what a write lost to a power cut looks like, not an empty store.</li>
      *   <li>A file that parses but has the wrong shape - {@code players} that is not a
-     *       section, an entry that is not a section, a key that is not a canonical UUID - is
-     *       set aside too, and the records that could be read are kept. Without the copy,
-     *       the first save would replace the misshapen node and the original would be
-     *       gone.</li>
+     *       section, an entry that is not a section, a key that is not a UUID or not in
+     *       canonical form - is set aside too, then repaired in memory: a non-canonical key
+     *       is read and moved to its canonical form, merged with any record already there,
+     *       and what cannot be read is removed. The repair is written by the next flush, so
+     *       the next boot finds a clean file and copies nothing. If the copy fails, writes
+     *       are refused and nothing is repaired.</li>
      *   <li>A file that cannot be read at all refuses writes for this session.</li>
      *   <li>A {@code schema-version} newer than this build is read as far as possible and
      *       never written over.</li>
@@ -225,14 +232,17 @@ public final class YamlDataStorage implements DataStorage {
     public void loadFromDisk() {
         setAsideThisLoad = false;
         YamlConfiguration loaded = Files.exists(dataFile) ? readDataFile() : missingFile();
-        Map<UUID, StoredPlayer> read = parse(loaded);
+        Map<UUID, StoredPlayer> read = new HashMap<>();
+        boolean repaired = parse(loaded, read);
 
         records.clear();
         records.putAll(read);
         synchronized (yamlLock) {
             yaml = loaded;
+            // A repaired document differs from the file, so it must be written even if no
+            // player ever joins.
+            dirty.set(repaired);
         }
-        dirty.set(false);
         logger.info("Storage loaded: " + read.size() + " player record(s) from "
                 + dataFile.getFileName() + ".");
     }
@@ -627,15 +637,20 @@ public final class YamlDataStorage implements DataStorage {
                 + reason, cause);
     }
 
-    private Map<UUID, StoredPlayer> parse(YamlConfiguration loaded) {
-        Map<UUID, StoredPlayer> read = new HashMap<>();
+    /**
+     * Reads every player record out of {@code loaded} into {@code read}, repairing the
+     * document where its shape is wrong.
+     *
+     * @return whether the document was changed, and so has to be written back
+     */
+    private boolean parse(YamlConfiguration loaded, Map<UUID, StoredPlayer> read) {
         if (loaded.getKeys(false).isEmpty()) {
-            return read;
+            return false;
         }
         checkSchemaVersion(loaded);
 
         if (!loaded.contains(PLAYERS)) {
-            return read;
+            return false;
         }
         ConfigurationSection players = loaded.getConfigurationSection(PLAYERS);
         if (players == null) {
@@ -643,32 +658,107 @@ public final class YamlDataStorage implements DataStorage {
                     + " is not a section; no records were read from it.");
             setAside("has a " + PLAYERS + " entry that is not a section; no records were read",
                     null);
-            return read;
+            if (!writable) {
+                return false;
+            }
+            loaded.createSection(PLAYERS);
+            return true;
         }
+
+        // Which records took their counted state from a canonical key, for the merge tie-break.
+        Map<UUID, Boolean> sessionFromCanonical = new HashMap<>();
+        List<String> unreadable = new ArrayList<>();
+        Map<String, UUID> renamed = new LinkedHashMap<>();
+
         for (String key : players.getKeys(false)) {
             UUID uuid = parseUuid(key);
             if (uuid == null) {
                 logger.warning("Storage: skipping " + PLAYERS + "." + key + " in " + dataFile
                         + ": the key is not a UUID.");
-                setAside(MISSHAPEN, null);
+                unreadable.add(key);
                 continue;
             }
             ConfigurationSection section = players.getConfigurationSection(key);
             if (section == null) {
                 logger.warning("Storage: skipping " + PLAYERS + "." + key + " in " + dataFile
                         + ": it is not a section.");
-                setAside(MISSHAPEN, null);
+                unreadable.add(key);
                 continue;
             }
-            read.put(uuid, new StoredPlayer(
+            boolean canonical = uuid.toString().equals(key);
+            if (!canonical) {
+                logger.warning("Storage: " + PLAYERS + "." + key + " in " + dataFile
+                        + " is not in canonical form; it is read as " + uuid + ".");
+                renamed.put(key, uuid);
+            }
+            StoredPlayer record = new StoredPlayer(
                     section.getString(NAME, null),
                     readLong(uuid, section, LIFETIME),
                     readLong(uuid, section, WINDOW_START),
                     readLong(uuid, section, WINDOW_SECONDS),
                     readLong(uuid, section, LAST_SEEN),
-                    readLong(uuid, section, COOLDOWN)));
+                    readLong(uuid, section, COOLDOWN));
+
+            StoredPlayer existing = read.get(uuid);
+            if (existing == null) {
+                read.put(uuid, record);
+                sessionFromCanonical.put(uuid, canonical);
+            } else {
+                boolean incomingWins = record.lastSeenMillis() > existing.lastSeenMillis()
+                        || (record.lastSeenMillis() == existing.lastSeenMillis()
+                                && canonical && !sessionFromCanonical.get(uuid));
+                StoredPlayer session = incomingWins ? record : existing;
+                read.put(uuid, new StoredPlayer(session.name(), session.lifetimeSeconds(),
+                        session.windowStartMillis(), session.windowSeconds(),
+                        session.lastSeenMillis(),
+                        Math.max(record.cooldownExpiresMillis(),
+                                existing.cooldownExpiresMillis())));
+                if (incomingWins) {
+                    sessionFromCanonical.put(uuid, canonical);
+                }
+            }
         }
-        return read;
+
+        if (unreadable.isEmpty() && renamed.isEmpty()) {
+            return false;
+        }
+        setAside(MISSHAPEN, null);
+        if (!writable) {
+            // The original could not be preserved, so it is not touched either.
+            return false;
+        }
+        for (String key : unreadable) {
+            players.set(key, null);
+        }
+        for (Map.Entry<String, UUID> entry : renamed.entrySet()) {
+            moveToCanonical(players, entry.getKey(), entry.getValue(), read.get(entry.getValue()));
+        }
+        return true;
+    }
+
+    /**
+     * Moves a player node to its canonical key, keeping any key the canonical node lacks and
+     * writing the merged record's own six over the top.
+     */
+    private static void moveToCanonical(ConfigurationSection players, String key, UUID uuid,
+                                        StoredPlayer merged) {
+        ConfigurationSection from = players.getConfigurationSection(key);
+        String canonical = uuid.toString();
+        ConfigurationSection to = players.isConfigurationSection(canonical)
+                ? players.getConfigurationSection(canonical)
+                : players.createSection(canonical);
+        for (String child : from.getKeys(false)) {
+            if (!to.contains(child)) {
+                to.set(child, from.get(child));
+            }
+        }
+        to.set(NAME, merged.name());
+        to.set(LIFETIME, merged.lifetimeSeconds());
+        to.set(WINDOW_START, merged.windowStartMillis());
+        to.set(WINDOW_SECONDS, merged.windowSeconds());
+        to.set(LAST_SEEN, merged.lastSeenMillis());
+        to.set(COOLDOWN, merged.cooldownExpiresMillis());
+        players.set(key, null);
     }
 
     private void checkSchemaVersion(YamlConfiguration loaded) {
@@ -737,13 +827,12 @@ public final class YamlDataStorage implements DataStorage {
     }
 
     /**
-     * A UUID in canonical form only, so a record cannot be read under one key and written
-     * back under another.
+     * The UUID a key names, in any form {@link UUID#fromString} accepts. The caller compares
+     * it with its canonical form, so a record is never written back under a second key.
      */
     private static UUID parseUuid(String key) {
         try {
-            UUID uuid = UUID.fromString(key);
-            return uuid.toString().equals(key) ? uuid : null;
+            return UUID.fromString(key);
         } catch (IllegalArgumentException e) {
             return null;
         }

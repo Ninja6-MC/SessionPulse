@@ -78,8 +78,9 @@ class StorageSurfaceTest {
                         + "periodic flush");
         int unregister = disable.indexOf("HandlerList.unregisterAll(this)");
         assertTrue(unregister >= 0 && unregister < disable.indexOf(".shutdown()"),
-                "listeners must be unregistered before the store closes, or a quit on a region "
-                        + "thread can land in a closed store and lose its save");
+                "listeners must be unregistered before the store closes. It stops further quits "
+                        + "being dispatched, which narrows - not closes - the window in which "
+                        + "one lands in a closed store and loses its save");
     }
 
     /**

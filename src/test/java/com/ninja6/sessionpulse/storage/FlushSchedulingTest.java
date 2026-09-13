@@ -164,7 +164,7 @@ class FlushSchedulingTest {
         store.startFlushing(Map::of);
 
         assertEquals(1, scheduler.scheduled.size(),
-                "a reload racing a disable must not leave a live periodic task behind");
+                "rescheduleFlush and startFlushing after shutdown must schedule nothing");
         assertTrue(scheduler.scheduled.get(0).isCancelled());
     }
 

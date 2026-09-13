@@ -50,6 +50,8 @@ adheres to [Semantic Versioning](https://semver.org/).
 - `storage/YamlDataStorage`: counted windows, lifetime playtime, last-seen and cooldowns
   persist to `data.yml` and survive a restart. Writes are in memory; the file is written by
   a periodic async flush, by a one-shot flush after every quit and cooldown, and
-  synchronously at disable. A `data.yml` that cannot be parsed is copied aside to
-  `data.yml.unreadable` rather than overwritten, and a file stamped with a newer
-  `schema-version` is never written over.
+  synchronously at disable, and every write is forced to disk before it replaces the file.
+  A `data.yml` that cannot be parsed, is blank, or has the wrong shape is copied aside to
+  `data.yml.unreadable` rather than overwritten; a misshapen one is then repaired so the
+  next start finds a clean file. A file stamped with a newer `schema-version` is never
+  written over.
