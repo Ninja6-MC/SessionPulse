@@ -15,7 +15,8 @@ import org.bukkit.plugin.Plugin;
  * fails if any other file names the library's package.
  *
  * <p>{@link #cancelAll()} lives here and <strong>not</strong> on {@link Scheduler}, which
- * is a deliberate departure from the four-method list in the issue. Only
+ * is a deliberate departure from the scheduler issue, which listed a blanket cancel among
+ * the seam's methods. Only
  * {@code SessionPulsePlugin} holds this type concretely; every other collaborator is
  * handed the interface, so the blanket cancel is simply unreachable from the places that
  * must not use it. See the note on {@link Scheduler} for the failure that shape prevents.
@@ -66,6 +67,13 @@ public final class FoliaLibScheduler implements Scheduler {
     @Override
     public Task async(Runnable task, long delayTicks, long periodTicks) {
         return new WrappedTaskHandle(scheduler.runTimerAsync(task, delayTicks, periodTicks));
+    }
+
+    @Override
+    public void asyncOnce(Runnable task) {
+        // The returned future is discarded because nothing awaits it: the seam promises a
+        // one-shot, not a result.
+        scheduler.runAsync(wrapped -> task.run());
     }
 
     /**

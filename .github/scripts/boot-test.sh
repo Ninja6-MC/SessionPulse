@@ -16,9 +16,10 @@
 # Everything about a limbo fixture, a protocol bot and allocation sampling is dropped.
 #
 # Exits non-zero if the server fails to start, the plugin fails to enable or disable, the
-# server rejects the plugin, or the log carries a linkage error or a stack trace naming
-# our package. The full server log is left at $WORKDIR/server.log for the caller to
-# upload as an artifact.
+# server rejects the plugin, storage does not load or data.yml is not written at shutdown,
+# or the log carries a linkage error, a failed save or a stack trace naming our package.
+# The full server log is left at $WORKDIR/server.log for the caller to upload as an
+# artifact.
 
 set -euo pipefail
 
@@ -207,6 +208,18 @@ grep -q 'MiniMessage pipeline' server.log \
     || fail "saveDefaultConfig() did not write config.yml - the resource is missing from the jar."
 
 grep -q 'Configuration loaded:' server.log || fail "The configuration never loaded."
+
+# Storage, on a real server. The loaded line is logged whether or not data.yml exists yet,
+# so it proves the read at enable ran, not that a file was found.
+grep -q 'Storage loaded:' server.log || fail "Storage never loaded."
+
+# Nobody joins, so nothing is dirty - but shutdown writes unconditionally, which is what
+# makes the file's presence after the graceful stop proof that the final synchronous save
+# ran rather than being skipped or lost to a cancelled async task.
+[[ -f "plugins/SessionPulse/data.yml" ]] \
+    || fail "data.yml was not written at shutdown - the final synchronous save did not run."
+
+! grep -q 'Failed to save' server.log || fail "Storage failed to write data.yml."
 
 # Matched on the SHAPE of a warning, not on a list of the individual warning texts.
 # PluginConfig can emit a dozen different complaints and an alternation of phrases only

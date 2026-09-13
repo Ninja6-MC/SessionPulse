@@ -140,13 +140,13 @@ class SchedulerSeamTest {
     }
 
     @Test
-    @DisplayName("Scheduler declares exactly the three methods, and no blanket cancel")
+    @DisplayName("Scheduler declares exactly the four methods, and no blanket cancel")
     void schedulerDeclaresNoBlanketCancel() {
         Set<String> declared = Arrays.stream(Scheduler.class.getDeclaredMethods())
             .map(Method::getName)
             .collect(Collectors.toCollection(LinkedHashSet::new));
 
-        assertEquals(Set.of("globalRepeating", "entity", "async"), declared,
+        assertEquals(Set.of("globalRepeating", "entity", "async", "asyncOnce"), declared,
             "Scheduler's method set changed. cancelAll in particular must stay OFF this "
                 + "interface: /spulse reload cancels its two tasks through their handles, and a "
                 + "blanket cancel reachable from a collaborator silently stops the plugin "
