@@ -124,18 +124,89 @@ class DataFileLoadTest {
     }
 
     @Test
-    @DisplayName("a blank file warns, naming it, and starts empty")
-    void blankFileWarnsAndStartsEmpty() {
+    @DisplayName("a blank file is set aside at SEVERE, since this plugin never writes one")
+    void blankFileIsSetAside() throws IOException {
         StorageFixture.write(file(), "  \n\n");
 
         YamlDataStorage store = loaded();
 
         assertTrue(store.records().isEmpty());
-        assertTrue(log.has(Level.WARNING, file().toString(), "empty"));
+        Path aside = dir.resolve("data.yml.unreadable");
+        assertTrue(log.has(Level.SEVERE, file().toString(), "blank", aside.toString()),
+                "a blank data.yml is what a write lost to a power cut leaves behind, so it is "
+                        + "reported as damage, not read quietly as an empty store");
+        assertEquals("  \n\n", StorageFixture.read(aside));
+
         store.save(uuid, someSession());
         store.writeNow();
         assertEquals(someSession(), StorageFixture.restart(file()).load(uuid),
-                "a blank file is not worth protecting; storage stays writable");
+                "with the original copied aside, storage stays writable");
+    }
+
+    /**
+     * Loads a file that parses but has the wrong shape, then writes over it, and checks the
+     * original survived the write byte for byte in exactly one copy.
+     */
+    private YamlDataStorage assertMisshapenFileSurvivesAWrite(String original) throws IOException {
+        StorageFixture.write(file(), original);
+        byte[] before = Files.readAllBytes(file());
+
+        YamlDataStorage store = loaded();
+        Path aside = dir.resolve("data.yml.unreadable");
+        assertTrue(log.has(Level.SEVERE, file().toString(), aside.toString()),
+                "a shape failure is reported at SEVERE, naming both paths: " + log.at(Level.SEVERE));
+
+        store.save(UUID.fromString("0f8fad5b-d9cb-469f-a165-70867728950e"), someSession());
+        store.writeNow();
+
+        assertArrayEquals(before, Files.readAllBytes(aside),
+                "the first save replaces the misshapen node in data.yml; without the copy the "
+                        + "original would be gone");
+        assertFalse(Files.exists(dir.resolve("data.yml.unreadable-1")),
+                "set aside at most once per load");
+        return store;
+    }
+
+    @Test
+    @DisplayName("players as a list is set aside before a save can replace it")
+    void playersThatIsNotASectionIsSetAside() throws IOException {
+        assertMisshapenFileSurvivesAWrite("""
+                schema-version: 1
+                players:
+                  - 6ba7b810-9dad-41d1-80b4-00c04fd430c8:
+                      lifetime-seconds: 999999
+                      cooldown-expires: 1900000000000
+                """);
+    }
+
+    @Test
+    @DisplayName("an entry that is not a section is set aside, and the readable entries are kept")
+    void anEntryThatIsNotASectionIsSetAside() throws IOException {
+        YamlDataStorage store = assertMisshapenFileSurvivesAWrite("""
+                schema-version: 1
+                players:
+                  6ba7b810-9dad-41d1-80b4-00c04fd430c8: [999999, 1900000000000]
+                  6ba7b811-9dad-41d1-80b4-00c04fd430c8:
+                    lifetime-seconds: 12
+                    last-seen: 1700000000000
+                """);
+
+        assertEquals(12L, store.load(UUID.fromString("6ba7b811-9dad-41d1-80b4-00c04fd430c8"))
+                .lifetimeSeconds());
+    }
+
+    @Test
+    @DisplayName("keys that are not canonical UUIDs are set aside, uppercase included")
+    void aNonUuidKeyIsSetAside() throws IOException {
+        assertMisshapenFileSurvivesAWrite("""
+                schema-version: 1
+                players:
+                  not-a-uuid:
+                    lifetime-seconds: 1
+                  6BA7B810-9DAD-41D1-80B4-00C04FD430C8:
+                    cooldown-expires: 1900000000000
+                """);
+        assertTrue(log.has(Level.WARNING, "6BA7B810-9DAD-41D1-80B4-00C04FD430C8"));
     }
 
     @Test
@@ -195,6 +266,40 @@ class DataFileLoadTest {
         assertEquals(1_700_000_000_000L, read.lastSeenMillis());
         assertTrue(log.has(Level.WARNING, uuid.toString(), "lifetime-seconds"));
         assertTrue(log.has(Level.WARNING, uuid.toString(), "window-seconds"));
+    }
+
+    @Test
+    @DisplayName("a quoted whole number is read as the number, without a warning")
+    void quotedNumberIsRead() {
+        StorageFixture.write(file(), """
+                schema-version: 1
+                players:
+                  6ba7b810-9dad-41d1-80b4-00c04fd430c8:
+                    last-seen: '1700000000000'
+                    cooldown-expires: " 1900000000000 "
+                """);
+
+        YamlDataStorage store = loaded();
+
+        assertEquals(1_900_000_000_000L, store.cooldownExpiresMillis(uuid),
+                "save never rewrites another writer's key, so a cooldown read as 0 here would "
+                        + "stay unenforced for good");
+        assertEquals(1_700_000_000_000L, store.load(uuid).lastSeenMillis());
+        assertTrue(log.at(Level.WARNING).isEmpty(), "" + log.at(Level.WARNING));
+    }
+
+    @Test
+    @DisplayName("a string that is not a whole number still warns and reads as zero")
+    void nonNumericStringWarnsAndReadsAsZero() {
+        StorageFixture.write(file(), """
+                schema-version: 1
+                players:
+                  6ba7b810-9dad-41d1-80b4-00c04fd430c8:
+                    cooldown-expires: '19e11'
+                """);
+
+        assertEquals(0L, loaded().cooldownExpiresMillis(uuid));
+        assertTrue(log.has(Level.WARNING, uuid.toString(), "cooldown-expires"));
     }
 
     @Test

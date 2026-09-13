@@ -14,6 +14,7 @@ import com.ninja6.sessionpulse.storage.YamlDataStorage;
 import net.kyori.adventure.platform.bukkit.BukkitAudiences;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import org.bukkit.entity.Player;
+import org.bukkit.event.HandlerList;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.util.ArrayList;
@@ -139,7 +140,13 @@ public class SessionPulsePlugin extends JavaPlugin {
 
     @Override
     public void onDisable() {
-        // Order matters. Tasks first: a tick still running while the audience closes would
+        // Listeners before anything else. On Folia a quit runs on a region thread and can
+        // land at any point below; unregistered, it cannot reach a store that is closing and
+        // drop its save, or ask a disabled plugin's scheduler for a flush. Bukkit would
+        // unregister them anyway, but only after this method returns.
+        HandlerList.unregisterAll(this);
+
+        // Order matters. Tasks next: a tick still running while the audience closes would
         // send into a closed provider and throw during shutdown, which the boot legs
         // would - correctly - read as a dirty disable.
         if (scheduler != null) {

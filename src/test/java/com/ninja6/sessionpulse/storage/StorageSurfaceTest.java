@@ -1,5 +1,6 @@
 package com.ninja6.sessionpulse.storage;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -71,27 +72,75 @@ class StorageSurfaceTest {
         int start = code.indexOf(" onDisable(");
         assertTrue(start >= 0, "no onDisable");
         int end = code.indexOf("\n    }", start);
-        assertTrue(code.substring(start, end).contains(".shutdown()"),
+        String disable = code.substring(start, end);
+        assertTrue(disable.contains(".shutdown()"),
                 "onDisable never writes the store; a clean stop loses everything since the last "
                         + "periodic flush");
+        int unregister = disable.indexOf("HandlerList.unregisterAll(this)");
+        assertTrue(unregister >= 0 && unregister < disable.indexOf(".shutdown()"),
+                "listeners must be unregistered before the store closes, or a quit on a region "
+                        + "thread can land in a closed store and lose its save");
+    }
+
+    /**
+     * Spellings of a file write. {@code .save(} cannot be scoped to {@code YamlConfiguration}
+     * by text alone, and a bare token would match {@code SessionStore#save}; the pattern
+     * instead matches the shapes a configuration save takes - a {@code File}, a variable
+     * named for a file, a string literal (blanked to spaces by the stripper), or nothing.
+     * {@code saveDefaultConfig()} in onEnable is Bukkit's own and is not matched.
+     */
+    private static final List<Pattern> FILE_WRITES = List.of(
+            Pattern.compile("Files\\.write"),
+            Pattern.compile("Files\\.move"),
+            Pattern.compile("Files\\.copy"),
+            Pattern.compile("Files\\.newBufferedWriter"),
+            Pattern.compile("Files\\.newOutputStream"),
+            Pattern.compile("FileChannel\\.open"),
+            Pattern.compile("new\\s+FileWriter\\b"),
+            Pattern.compile("new\\s+FileOutputStream\\b"),
+            Pattern.compile("saveToString\\("),
+            Pattern.compile("\\.save\\(\\s*(new\\s+File\\b|[A-Za-z_]*[Ff]ile\\s*\\)|\\))"));
+
+    private static List<String> fileWritesIn(String code) {
+        List<String> found = new ArrayList<>();
+        for (Pattern pattern : FILE_WRITES) {
+            if (pattern.matcher(code).find()) {
+                found.add(pattern.pattern());
+            }
+        }
+        return found;
+    }
+
+    @Test
+    @DisplayName("the file-write patterns match the spellings they name, and not SessionStore#save")
+    void fileWritePatternsMatchWhatTheyName() {
+        String sample = SourceTree.stripCommentsAndStrings(String.join("\n",
+                "Files.newBufferedWriter(p);", "new FileOutputStream(f);", "new FileWriter(f);",
+                "yaml.save(new File(dir, \"data.yml\"));", "yaml.save(dataFile);",
+                "yaml.save(\"data.yml\");"));
+        // Four distinct patterns: the three save spellings share one.
+        assertEquals(4, fileWritesIn(sample).size(), "a pattern went dead: " + fileWritesIn(sample));
+        assertEquals(1, fileWritesIn("yaml.save(new File(dir, name));").size());
+        assertEquals(1, fileWritesIn("yaml.save(dataFile);").size());
+        assertEquals(1, fileWritesIn(
+                SourceTree.stripCommentsAndStrings("yaml.save(\"x.yml\");")).size());
+        assertTrue(fileWritesIn("store.save(uuid, snapshot);").isEmpty(),
+                "the in-memory SessionStore write is not a file write");
     }
 
     @Test
     @DisplayName("file writes happen under storage/ and nowhere else")
     void fileWritesAreConfinedToStorage() {
-        List<String> calls = List.of("Files.write", "Files.move", "Files.copy", "saveToString(");
         List<String> offenders = new ArrayList<>();
         boolean seenInStorage = false;
         for (Path source : SourceTree.mainSources()) {
             String code = SourceTree.stripCommentsAndStrings(SourceTree.read(source));
             boolean inStorage = source.getParent().getFileName().toString().equals("storage");
-            for (String call : calls) {
-                if (code.contains(call)) {
-                    if (inStorage) {
-                        seenInStorage = true;
-                    } else {
-                        offenders.add("  - " + source + " calls " + call);
-                    }
+            for (String call : fileWritesIn(code)) {
+                if (inStorage) {
+                    seenInStorage = true;
+                } else {
+                    offenders.add("  - " + source + " matches " + call);
                 }
             }
         }

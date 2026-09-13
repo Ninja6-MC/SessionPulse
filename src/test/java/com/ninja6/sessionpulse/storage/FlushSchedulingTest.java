@@ -154,6 +154,21 @@ class FlushSchedulingTest {
     }
 
     @Test
+    @DisplayName("rescheduling after shutdown schedules nothing")
+    void rescheduleAfterShutdownSchedulesNothing() {
+        YamlDataStorage store = store();
+        store.startFlushing(Map::of);
+        store.shutdown();
+
+        store.rescheduleFlush();
+        store.startFlushing(Map::of);
+
+        assertEquals(1, scheduler.scheduled.size(),
+                "a reload racing a disable must not leave a live periodic task behind");
+        assertTrue(scheduler.scheduled.get(0).isCancelled());
+    }
+
+    @Test
     @DisplayName("shutdown writes even when nothing is dirty, so the file exists after a clean stop")
     void shutdownWritesAnEmptyStore() {
         store().shutdown();

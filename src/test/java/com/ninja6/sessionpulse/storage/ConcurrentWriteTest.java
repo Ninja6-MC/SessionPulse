@@ -55,6 +55,13 @@ class ConcurrentWriteTest {
                 if (seen < BASE + i) {
                     violations.add("cooldown " + (BASE + i) + " was overwritten by " + seen);
                 }
+                // The document half: a save that writes the cooldown key from a stale record
+                // leaves the map right and the file wrong.
+                long written = store.documentLong(uuid, YamlDataStorage.COOLDOWN);
+                if (written < BASE + i) {
+                    violations.add("cooldown " + (BASE + i) + " in the document was overwritten by "
+                            + written);
+                }
             }
         }, "cooldown-writer");
 
@@ -65,6 +72,11 @@ class ConcurrentWriteTest {
                 long seen = store.load(uuid).lifetimeSeconds();
                 if (seen < i) {
                     violations.add("lifetime " + i + " was overwritten by " + seen);
+                }
+                long written = store.documentLong(uuid, YamlDataStorage.LIFETIME);
+                if (written < i) {
+                    violations.add("lifetime " + i + " in the document was overwritten by "
+                            + written);
                 }
             }
         }, "session-writer");
@@ -84,7 +96,7 @@ class ConcurrentWriteTest {
         assertEquals(last, store.load(uuid).lifetimeSeconds());
         assertEquals(BASE + last, store.load(uuid).lastSeenMillis());
 
-        // The document must agree with the map: each writer owns its own keys in the file too.
+        // And what reaches the disk agrees with both.
         store.writeNow();
         YamlDataStorage restarted = StorageFixture.restart(file);
         assertEquals(BASE + last, restarted.cooldownExpiresMillis(uuid));

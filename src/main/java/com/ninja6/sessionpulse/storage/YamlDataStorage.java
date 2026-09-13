@@ -8,12 +8,15 @@ import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.YamlConfiguration;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -81,7 +84,9 @@ import java.util.logging.Logger;
  *       in place with nothing marked dirty to repair it.</li>
  * </ul>
  *
- * <p>Allowed nesting is map bin lock then YAML guard, and disk lock then YAML guard.
+ * <p>Allowed nesting is map bin lock then YAML guard, and disk lock then YAML guard. A
+ * third, small lock guards only the periodic task's handle; it is never held across I/O or
+ * while another lock is taken, so a reload rescheduling the flush never waits on the disk.
  *
  * <h2>Accepted limitations</h2>
  *
@@ -114,6 +119,9 @@ public final class YamlDataStorage implements DataStorage {
 
     private static final long TICKS_PER_MINUTE = 1_200L;
 
+    private static final String MISSHAPEN = "has player entries that could not be read (see "
+            + "the warnings above); the others were kept";
+
     /**
      * Puts serialised text on disk.
      *
@@ -135,6 +143,7 @@ public final class YamlDataStorage implements DataStorage {
 
     private final Object yamlLock = new Object();
     private final Object diskLock = new Object();
+    private final Object taskLock = new Object();
 
     /** Guarded by {@link #yamlLock}. */
     private YamlConfiguration yaml = new YamlConfiguration();
@@ -145,7 +154,15 @@ public final class YamlDataStorage implements DataStorage {
     private volatile boolean closed;
     private volatile boolean writable = true;
     private volatile String refusal;
-    private volatile Scheduler.Task flushTask;
+
+    /** Guarded by {@link #taskLock}. */
+    private Scheduler.Task flushTask;
+
+    /** Guarded by {@link #taskLock}. Set before the final write, so no reschedule follows it. */
+    private boolean stopped;
+
+    /** Main thread only, during {@link #loadFromDisk()}. */
+    private boolean setAsideThisLoad;
     private volatile Supplier<Map<UUID, SessionSnapshot>> online;
 
     /**
@@ -185,10 +202,16 @@ public final class YamlDataStorage implements DataStorage {
      *
      * <ul>
      *   <li>A missing file starts empty; the first flush creates it.</li>
-     *   <li>An empty file starts empty, with a warning.</li>
      *   <li>A file that does not parse is copied, byte for byte, to the first free name of
      *       {@code data.yml.unreadable}, {@code data.yml.unreadable-1}, and so on, and
      *       storage starts empty. If the copy fails, writes are refused.</li>
+     *   <li>A blank file is set aside the same way. This plugin never writes one, so a
+     *       blank file is what a write lost to a power cut looks like, not an empty store.</li>
+     *   <li>A file that parses but has the wrong shape - {@code players} that is not a
+     *       section, an entry that is not a section, a key that is not a canonical UUID - is
+     *       set aside too, and the records that could be read are kept. Without the copy,
+     *       the first save would replace the misshapen node and the original would be
+     *       gone.</li>
      *   <li>A file that cannot be read at all refuses writes for this session.</li>
      *   <li>A {@code schema-version} newer than this build is read as far as possible and
      *       never written over.</li>
@@ -200,6 +223,7 @@ public final class YamlDataStorage implements DataStorage {
      * document over a file that could have been recovered.
      */
     public void loadFromDisk() {
+        setAsideThisLoad = false;
         YamlConfiguration loaded = Files.exists(dataFile) ? readDataFile() : missingFile();
         Map<UUID, StoredPlayer> read = parse(loaded);
 
@@ -234,10 +258,14 @@ public final class YamlDataStorage implements DataStorage {
      * every writer and every flush is a no-op.
      */
     public void shutdown() {
-        Scheduler.Task task = flushTask;
-        flushTask = null;
-        if (task != null) {
-            task.cancel();
+        // Released before the write: a reschedule racing this call returns at once rather
+        // than waiting on the disk.
+        synchronized (taskLock) {
+            stopped = true;
+            if (flushTask != null) {
+                flushTask.cancel();
+                flushTask = null;
+            }
         }
         synchronized (diskLock) {
             if (closed) {
@@ -384,15 +412,19 @@ public final class YamlDataStorage implements DataStorage {
 
     @Override
     public void rescheduleFlush() {
-        if (closed) {
-            return;
+        synchronized (taskLock) {
+            // Checked under the lock shutdown sets it under, so a reload racing a disable
+            // cannot schedule a task after shutdown has cancelled the last one, and two
+            // reloads cannot leak a handle between them.
+            if (stopped || closed) {
+                return;
+            }
+            if (flushTask != null) {
+                flushTask.cancel();
+            }
+            long ticks = config.get().flushIntervalMinutes() * TICKS_PER_MINUTE;
+            flushTask = scheduler.async(this::periodicFlush, ticks, ticks);
         }
-        Scheduler.Task previous = flushTask;
-        if (previous != null) {
-            previous.cancel();
-        }
-        long ticks = config.get().flushIntervalMinutes() * TICKS_PER_MINUTE;
-        flushTask = scheduler.async(this::periodicFlush, ticks, ticks);
     }
 
     @Override
@@ -477,8 +509,13 @@ public final class YamlDataStorage implements DataStorage {
     }
 
     /**
-     * Writes to a sibling temporary file and moves it over the target, so a crash mid-write
-     * leaves the previous file whole rather than a truncated one.
+     * Writes to a sibling temporary file, forces it to the device, and moves it over the
+     * target, so neither a crash nor a power cut mid-write leaves a truncated file.
+     *
+     * <p>The move alone only covers a dead JVM. On a filesystem that can commit the rename
+     * before the data blocks, power lost between the two leaves a zero-length file under
+     * the real name - which is why the temporary file is forced before the move, and why a
+     * blank file on load is set aside rather than read as an empty store.
      */
     static void writeAtomically(Path target, String text) throws IOException {
         Path parent = target.toAbsolutePath().getParent();
@@ -486,12 +523,28 @@ public final class YamlDataStorage implements DataStorage {
             Files.createDirectories(parent);
         }
         Path temporary = target.resolveSibling(target.getFileName() + ".tmp");
-        Files.writeString(temporary, text, StandardCharsets.UTF_8);
+        try (FileChannel channel = FileChannel.open(temporary, StandardOpenOption.CREATE,
+                StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE)) {
+            ByteBuffer bytes = StandardCharsets.UTF_8.encode(text);
+            while (bytes.hasRemaining()) {
+                channel.write(bytes);
+            }
+            channel.force(true);
+        }
         try {
             Files.move(temporary, target,
                     StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
         } catch (AtomicMoveNotSupportedException e) {
             Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
+        }
+        if (parent != null) {
+            // Makes the rename itself durable on POSIX. Best effort: Windows cannot open a
+            // directory as a channel, and the data is already forced either way.
+            try (FileChannel directory = FileChannel.open(parent, StandardOpenOption.READ)) {
+                directory.force(true);
+            } catch (IOException e) {
+                // Nothing further to do; see above.
+            }
         }
     }
 
@@ -511,7 +564,7 @@ public final class YamlDataStorage implements DataStorage {
         } catch (CharacterCodingException e) {
             // An IOException too, so it is caught first: it means the bytes are not text,
             // which is a parse failure, not a read failure.
-            setAside(e);
+            setAside("could not be decoded as UTF-8; storage starts with no records", e);
             return new YamlConfiguration();
         } catch (IOException e) {
             refuseWrites("it could not be read, so it is left untouched and changes are kept "
@@ -520,7 +573,9 @@ public final class YamlDataStorage implements DataStorage {
         }
 
         if (text.isBlank()) {
-            logger.warning("Storage: " + dataFile + " is empty; starting with no records.");
+            // Never written by this plugin, so it is damage, not an empty store.
+            setAside("is blank, which this plugin never writes; storage starts with no records",
+                    null);
             return new YamlConfiguration();
         }
         YamlConfiguration parsed = new YamlConfiguration();
@@ -528,14 +583,24 @@ public final class YamlDataStorage implements DataStorage {
             parsed.loadFromString(text);
         } catch (InvalidConfigurationException e) {
             // Includes a root that is not a map at all.
-            setAside(e);
+            setAside("could not be parsed; storage starts with no records", e);
             return new YamlConfiguration();
         }
         return parsed;
     }
 
-    /** Copies an unparseable file aside so the next flush cannot destroy it. */
-    private void setAside(Exception cause) {
+    /**
+     * Copies a file this build could not fully understand aside, so the next flush cannot
+     * destroy it. At most once per load: one copy of the original is enough.
+     *
+     * @param problem what is wrong, phrased to follow the file name
+     * @param cause   the parse failure, or {@code null}
+     */
+    private void setAside(String problem, Exception cause) {
+        if (setAsideThisLoad) {
+            return;
+        }
+        setAsideThisLoad = true;
         String base = dataFile.getFileName() + ".unreadable";
         Path aside = dataFile.resolveSibling(base);
         for (int n = 1; Files.exists(aside); n++) {
@@ -544,13 +609,15 @@ public final class YamlDataStorage implements DataStorage {
         try {
             Files.copy(dataFile, aside);
         } catch (IOException e) {
-            e.addSuppressed(cause);
-            refuseWrites("it could not be parsed and could not be copied aside to " + aside
+            if (cause != null) {
+                e.addSuppressed(cause);
+            }
+            refuseWrites("it " + problem + ", and it could not be copied aside to " + aside
                     + ", so it is left untouched and changes are kept in memory only.", e);
             return;
         }
-        logger.log(Level.SEVERE, "Storage could not parse " + dataFile + ". It was copied, "
-                + "unchanged, to " + aside + ", and storage starts with no records.", cause);
+        logger.log(Level.SEVERE, "Storage: " + dataFile + " " + problem + ". It was copied, "
+                + "unchanged, to " + aside + " before anything could overwrite it.", cause);
     }
 
     private void refuseWrites(String reason, Throwable cause) {
@@ -574,6 +641,8 @@ public final class YamlDataStorage implements DataStorage {
         if (players == null) {
             logger.warning("Storage: " + PLAYERS + " in " + dataFile
                     + " is not a section; no records were read from it.");
+            setAside("has a " + PLAYERS + " entry that is not a section; no records were read",
+                    null);
             return read;
         }
         for (String key : players.getKeys(false)) {
@@ -581,12 +650,14 @@ public final class YamlDataStorage implements DataStorage {
             if (uuid == null) {
                 logger.warning("Storage: skipping " + PLAYERS + "." + key + " in " + dataFile
                         + ": the key is not a UUID.");
+                setAside(MISSHAPEN, null);
                 continue;
             }
             ConfigurationSection section = players.getConfigurationSection(key);
             if (section == null) {
                 logger.warning("Storage: skipping " + PLAYERS + "." + key + " in " + dataFile
                         + ": it is not a section.");
+                setAside(MISSHAPEN, null);
                 continue;
             }
             read.put(uuid, new StoredPlayer(
@@ -623,18 +694,46 @@ public final class YamlDataStorage implements DataStorage {
         }
         // instanceof Number, never isLong: YAML hands a small value back as an Integer, and
         // isLong is an instanceof Long check that would reject every one of them.
-        if (!(value instanceof Number number)) {
+        long read;
+        if (value instanceof Number number) {
+            read = number.longValue();
+        } else if (value instanceof String text && isWholeNumber(text.trim())) {
+            // A hand edit that quoted a number. Read it: each key is rewritten only by its
+            // own writer, so a cooldown read as 0 here would never be repaired or enforced.
+            read = Long.parseLong(text.trim());
+        } else {
             logger.warning("Storage: " + PLAYERS + "." + uuid + "." + key + " in " + dataFile
                     + " is not a number (" + value + "); reading it as 0.");
             return 0L;
         }
-        long read = number.longValue();
         if (read < 0L) {
             logger.warning("Storage: " + PLAYERS + "." + uuid + "." + key + " in " + dataFile
                     + " is negative (" + read + "); reading it as 0.");
             return 0L;
         }
         return read;
+    }
+
+    private static boolean isWholeNumber(String text) {
+        try {
+            Long.parseLong(text);
+            return true;
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+
+    /**
+     * One numeric key for a player, read from the in-memory document under the YAML guard.
+     *
+     * <p>For the concurrency test, which has to see the document as well as the map: a
+     * writer that sets another writer's key from a stale record leaves the map right and
+     * the file wrong.
+     */
+    long documentLong(UUID uuid, String key) {
+        synchronized (yamlLock) {
+            return yaml.getLong(PLAYERS + "." + uuid + "." + key);
+        }
     }
 
     /**
