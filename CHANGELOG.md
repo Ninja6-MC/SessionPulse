@@ -25,8 +25,8 @@ adheres to [Semantic Versioning](https://semver.org/).
   it and silently stop the counting.
 - FoliaLib and Adventure shaded into the plugin jar, relocated under
   `com.ninja6.sessionpulse.lib`, with `folia-supported: true` in `plugin.yml`. Every
-  message goes through `BukkitAudiences` on all platforms, because the relocated
-  Adventure is not the copy Paper ships.
+  message goes through `Notifier`, which renders through `BukkitAudiences` on all
+  platforms, because the relocated Adventure is not the copy Paper ships.
 - Boot legs in CI that enable and disable the plugin on Paper and Folia, and a build
   step that opens the packaged jar and proves the relocation applied.
 - `config/PluginConfig`, an immutable configuration snapshot, with the `Milestone`,
@@ -55,3 +55,8 @@ adheres to [Semantic Versioning](https://semver.org/).
   `data.yml.unreadable` rather than overwritten; a misshapen one is then repaired so the
   next start finds a clean file. A file stamped with a newer `schema-version` is never
   written over.
+- `notify/Notifier`, the one door to a player's screen: chat, action bar, title and sound
+  rendered from MiniMessage, with the configured prefix on chat only, and a legacy
+  section-sign render for the String-only kick and pre-login screens that keeps hex
+  colours. `notify/Placeholders` fills `<player>`, `<hours>`, `<minutes>` and
+  `<cooldown>` as text, never as markup, so a player name cannot inject a click event.

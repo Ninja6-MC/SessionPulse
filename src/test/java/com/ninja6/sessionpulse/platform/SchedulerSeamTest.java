@@ -39,9 +39,10 @@ class SchedulerSeamTest {
 
     /**
      * What the seam's own signatures may not name. A superset of the above: the interface
-     * must not surface Adventure either. {@code SessionPulsePlugin} does import
-     * {@code net.kyori} - it owns the audience provider - so this list is only ever applied
-     * to the reflected API of {@code Scheduler}, never to the source tree.
+     * must not surface Adventure either. Adventure is named in source by
+     * {@code notify/Notifier}, and to validate only by {@code config/MessageCheck} - see
+     * {@code OutputDoorTest} - so this list is only ever applied to the reflected API of
+     * {@code Scheduler}, never to the source tree.
      */
     private static final List<String> SEAM_MARKERS = List.of("com.tcoded", "folialib", "kyori");
 

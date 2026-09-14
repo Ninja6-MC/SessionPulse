@@ -14,7 +14,7 @@ package com.ninja6.sessionpulse.config;
  *                        allowance, which is the bypass the counted window exists to close.
  *                        Clamped to {@code 1-10080}
  * @param kickMessage     MiniMessage shown on the disconnect screen, never {@code null}.
- *                        Rendered through the legacy serializer, because
+ *                        Rendered through {@code notify.Notifier#legacy}, because
  *                        {@code Player#kickPlayer} is String-only on spigot-api
  * @param cooldownMinutes minutes before the player may rejoin. Clamped to {@code 1-1440}:
  *                        a zero would let them reconnect still over the limit and be

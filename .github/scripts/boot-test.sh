@@ -17,7 +17,8 @@
 #
 # Exits non-zero if the server fails to start, the plugin fails to enable or disable, the
 # server rejects the plugin, storage does not load or data.yml is not written at shutdown,
-# or the log carries a linkage error, a failed save or a stack trace naming our package.
+# the notifier's console render or its legacy render is missing from the log, or the log
+# carries a linkage error, a failed save or a stack trace naming our package.
 # The full server log is left at $WORKDIR/server.log for the caller to upload as an
 # artifact.
 
@@ -178,13 +179,20 @@ grep -q 'Enabling SessionPulse' server.log || fail "Plugin was never enabled."
 grep -q 'SessionPulse enabled' server.log || fail "onEnable did not run to completion."
 grep -q 'SessionPulse disabled' server.log || fail "onDisable did not run to completion."
 
-# The relocated Adventure pipeline, proved rather than assumed. onEnable deserializes a
-# MiniMessage string and sends it to the console audience, which is the only thing in the
-# plugin today that walks the ServiceLoader path mergeServiceFiles() exists to keep
-# working. Without this line in the log, the jar enabled but the pipeline did not round
-# trip - and every other assertion here would still have passed.
+# The relocated Adventure pipeline, proved rather than assumed. onEnable renders a chat
+# line, an action bar and a title through Notifier to the console audience, and logs a
+# legacy render. Nothing joins, so these are the only Adventure calls a boot makes.
 grep -q 'MiniMessage pipeline' server.log \
-    || fail "The MiniMessage round trip never reached the console - the relocated Adventure pipeline did not work."
+    || fail "The notifier's chat render never reached the console - the relocated Adventure pipeline did not work."
+
+# The legacy serializer resolves after relocation and actually rendered: the text is
+# present and the markup is not. Enforcement's kick and pre-login messages depend on it.
+# One grep, never a pipe: a negated pipe under pipefail can pass on the very line it
+# exists to catch.
+grep -q 'Legacy serializer' server.log \
+    || fail "The legacy render was never logged - LegacyComponentSerializer did not resolve."
+! grep -qE 'Legacy serializer.*</' server.log \
+    || fail "The legacy render still carries MiniMessage markup - it was logged unrendered."
 
 # Folia refuses a plugin without folia-supported and says exactly this.
 ! grep -qi 'not marked as supporting Folia' server.log \
@@ -248,9 +256,11 @@ grep -q 'Storage loaded:' server.log || fail "Storage never loaded."
     || fail "FoliaLib reports it was not relocated - the shadowJar relocation did not apply."
 
 # The shape a broken relocation or a dropped service file actually takes. None of these
-# appear in a healthy log, and each is invisible to the Gradle build.
-! grep -qE 'NoClassDefFoundError|ClassNotFoundException|NoSuchMethodError|ServiceConfigurationError' server.log \
-    || fail "A linkage error appeared in the log - check the relocation and mergeServiceFiles()."
+# appear in a healthy log, and each is invisible to the Gradle build. AbstractMethodError
+# and IncompatibleClassChangeError are the shapes an adventure-api / adventure-platform
+# skew takes.
+! grep -qE 'NoClassDefFoundError|ClassNotFoundException|NoSuchMethodError|AbstractMethodError|IncompatibleClassChangeError|ServiceConfigurationError' server.log \
+    || fail "A linkage error appeared in the log - check the relocation, mergeServiceFiles(), and the adventure-api / adventure-platform versions."
 
 # The legacy Bukkit scheduler throws this on Folia. Catching it is the whole point of
 # routing every task through the Scheduler seam.

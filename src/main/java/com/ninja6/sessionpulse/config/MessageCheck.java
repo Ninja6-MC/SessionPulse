@@ -7,7 +7,8 @@ import net.kyori.adventure.text.minimessage.MiniMessage;
  *
  * <h2>Why this is not simply a try/catch around the ordinary parser</h2>
  *
- * <p>Verified against adventure-text-minimessage 4.21.0, the version this build pins:
+ * <p>Verified against adventure-text-minimessage 4.21.0, and again at 4.26.1, which is what the
+ * BOM in build.gradle.kts resolves today:
  * {@code MiniMessage.miniMessage()} does not throw for a merely unknown or malformed tag.
  * It catches its own {@code ParsingException} internally and emits the offending tag as
  * literal text, so {@code <bogustag>}, {@code <color:#zzzzzz>},
@@ -34,6 +35,11 @@ import net.kyori.adventure.text.minimessage.MiniMessage;
  *
  * <p>Both parsers are held as static finals: they are immutable, thread-safe, and building
  * one per call would be a parse of the tag registry per configuration value.
+ *
+ * <p>This class names MiniMessage to validate, and throws the result away. It never builds
+ * a Component that reaches anybody - that is {@code notify.Notifier}, and OutputDoorTest
+ * allows this file {@code net.kyori} and {@code MiniMessage} and nothing else from
+ * Adventure.
  *
  * <p>Note for whoever bumps Adventure: the lenient call is made first, so if a later
  * version starts reporting more from the ordinary parser, {@link #problem} widens to catch

@@ -517,7 +517,7 @@ public final class PluginConfig {
     }
 
     // -----------------------------------------------------------------------------
-    // Accessors. Record-style, no `get` prefix, matching SessionPulsePlugin#audiences()
+    // Accessors. Record-style, no `get` prefix, matching SessionPulsePlugin#notifier()
     // and #scheduler() and the four records this class returns.
     // -----------------------------------------------------------------------------
 
