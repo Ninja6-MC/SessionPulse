@@ -88,17 +88,22 @@ public final class SessionTracker {
      * <p>A backwards system clock produces a negative gap and therefore never grants a
      * fresh window. Accepted, and the safe direction to fail in.
      *
+     * <p>Fired milestones are seeded twice: inside the map's compute, against the
+     * configuration read there, and again once the session is visible, against a fresh read.
+     * A reload that runs entirely while the compute is still building the session cannot see
+     * it, and would otherwise leave it seeded against the file that reload replaced.
+     *
      * @param uuid the player
      * @param name their name
      * @return their live session, new or existing, never {@code null}
      */
     public PlayerSession onJoin(UUID uuid, String name) {
-        return sessions.computeIfAbsent(uuid, key -> {
+        PlayerSession joined = sessions.computeIfAbsent(uuid, key -> {
             long wallNow = clock.wallMillis();
             long nanoNow = clock.nanoTime();
+            PluginConfig current = config.get();
             SessionSnapshot stored = store.load(key);
 
-            PluginConfig current = config.get();
             long gapMillis = wallNow - stored.lastSeenMillis();
             long thresholdMillis = (long) current.windowResetHours() * MILLIS_PER_HOUR;
             boolean reset = stored.isUnknown() || gapMillis > thresholdMillis;
@@ -118,6 +123,12 @@ public final class SessionTracker {
             }
             return session;
         });
+        // Additive and idempotent, so harmless for a player who was already tracked.
+        PluginConfig afterJoin = config.get();
+        if (afterJoin != null) {
+            joined.seedFired(passedMilestones(afterJoin, joined.windowMinutes()));
+        }
+        return joined;
     }
 
     /**
@@ -285,6 +296,9 @@ public final class SessionTracker {
      * a claim and a seed can never disagree about a boundary. A milestone missed by a lagging
      * tick is still claimed on the next one.
      *
+     * <p>A session no longer in the map - replaced by a window reset, or removed by a quit -
+     * claims nothing. A tick can still hold one, and its fired set is read by nobody.
+     *
      * <p>The walk stops at the first milestone not yet reached, which relies on
      * {@link PluginConfig#milestones()} being sorted by minute.
      *
@@ -293,7 +307,7 @@ public final class SessionTracker {
      */
     public List<Milestone> claimDue(PlayerSession session) {
         PluginConfig current = config.get();
-        if (current == null) {
+        if (current == null || !isLive(session)) {
             return List.of();
         }
         // Read once. Two reads could straddle a minute and claim against two windows.
@@ -321,10 +335,20 @@ public final class SessionTracker {
      * be a whole interval behind, so without this a crash just after an alert would store a
      * window short of it and the alert would fire again on rejoin.
      *
+     * <p>Does nothing for a session no longer in the map. A quit has already stored the
+     * final figure, and a detached session's older one must not overwrite it.
+     *
      * @param session the player's live session
      */
     public void checkpoint(PlayerSession session) {
-        store.save(session.uuid(), snapshotOf(session, clock.wallMillis()));
+        if (isLive(session)) {
+            store.save(session.uuid(), snapshotOf(session, clock.wallMillis()));
+        }
+    }
+
+    /** Whether {@code session} is the object the map holds for its player, not a stale one. */
+    private boolean isLive(PlayerSession session) {
+        return sessions.get(session.uuid()) == session;
     }
 
     /**
@@ -340,8 +364,9 @@ public final class SessionTracker {
      *       the tick. On Folia a player's {@code /spulse reload} runs on their region thread
      *       and the tick on the global one, so a tick landing between publish and seed would
      *       claim the new milestone for everyone already past it.</li>
-     *   <li>Seeding again <em>after</em> it is published covers a player who joined in
-     *       between and was seeded against the previous configuration.</li>
+     *   <li>Seeding again <em>after</em> it is published covers a player whose join became
+     *       visible between the two passes, seeded against the previous configuration. A join
+     *       still being built when this returns is seeded by {@link #onJoin} itself.</li>
      * </ul>
      *
      * <p>Seeding is additive and idempotent: a milestone already fired stays fired, and the
@@ -356,16 +381,6 @@ public final class SessionTracker {
         seedAll(next);
         publish.accept(next);
         seedAll(next);
-    }
-
-    /**
-     * Re-seeds every live session's fired-milestone set against the configuration in force.
-     *
-     * <p>Seeding is additive - a milestone already fired stays fired. A reload goes through
-     * {@link #applyReload}, which orders this against publication.
-     */
-    public void reseedFiredMilestones() {
-        seedAll(config.get());
     }
 
     private void seedAll(PluginConfig source) {

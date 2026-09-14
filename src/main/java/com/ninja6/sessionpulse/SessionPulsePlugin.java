@@ -224,12 +224,15 @@ public class SessionPulsePlugin extends JavaPlugin {
     /**
      * Re-reads config.yml. Called by {@code /spulse reload} once the command issue lands.
      *
+     * <p><strong>The only way to reload the configuration.</strong> Callers do not publish a
+     * configuration or seed milestones themselves: this method orders milestone seeding
+     * around publication, through {@link SessionTracker#applyReload}, and any other route
+     * can fire a lowered milestone at every player already past it.
+     *
      * <p>Does NOT call {@code Scheduler#cancelAll}. That is disable-only: cancelling every
      * task here would kill the session tick and the plugin would silently stop counting.
      * The reload issue re-schedules the flush and tick tasks by their own handles - the
-     * flush through {@link DataStorage#rescheduleFlush()}. It calls this method and nothing
-     * else for the configuration: seeding milestones before and after publication is done
-     * here, and must not be repeated or reordered by the caller.
+     * flush through {@link DataStorage#rescheduleFlush()}.
      */
     public void reload() {
         reloadConfig();

@@ -97,6 +97,22 @@ class MilestoneWindowTest {
     }
 
     @Test
+    @DisplayName("a session no longer tracked neither claims nor overwrites what its quit stored")
+    void detachedSessionClaimsAndCheckpointsNothing() {
+        tracker.onJoin(uuid, "Ada");
+        clock.advance(Duration.ofMinutes(60));
+        PlayerSession held = tracker.accrue(uuid, false);
+        SessionSnapshot quit = tracker.onQuit(uuid);
+        clock.advance(Duration.ofSeconds(5));
+
+        assertEquals(List.of(), minutesOf(tracker.claimDue(held)),
+                "a tick still holding the quit session must not schedule an alert for it");
+        assertTrue(held.firedMinutes().isEmpty(), "and must not mark anything fired");
+        tracker.checkpoint(held);
+        assertEquals(List.of(quit), store.saves, "the quit's save is the last word");
+    }
+
+    @Test
     @DisplayName("an administrative window reset re-arms the milestone")
     void adminResetRearms() {
         fireSixty();

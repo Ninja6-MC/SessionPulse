@@ -84,6 +84,33 @@ class MilestoneReloadTest {
     }
 
     @Test
+    @DisplayName("a reload running entirely inside a join's compute does not leave it unseeded")
+    void reloadInsideJoinComputeDoesNotRefire() {
+        SessionTracker[] holder = new SessionTracker[1];
+        SessionStore reloadingStore = new SessionStore() {
+            @Override
+            public SessionSnapshot load(UUID key) {
+                // The whole reload overlaps the compute: it cannot see this session yet.
+                holder[0].applyReload(milestones(30), published -> config = published);
+                return new SessionSnapshot("Ada", 5400L, clock.wallMillis(), 5400L,
+                        clock.wallMillis());
+            }
+
+            @Override
+            public void save(UUID key, SessionSnapshot snapshot) {
+            }
+        };
+        SessionTracker joining = new SessionTracker(() -> config, clock, reloadingStore);
+        holder[0] = joining;
+
+        joining.onJoin(uuid, "Ada");
+        clock.advance(Duration.ofSeconds(1));
+
+        assertEquals(List.of(), minutesOf(joining.claimDue(joining.accrue(uuid, false))),
+                "the compute seeded against the old file; ninety stored minutes are past thirty");
+    }
+
+    @Test
     @DisplayName("raising a milestone above the current window leaves it armed")
     void raisingMinuteRearms() {
         config = milestones(30);
