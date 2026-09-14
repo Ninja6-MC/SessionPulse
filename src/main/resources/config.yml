@@ -33,22 +33,34 @@ tracking:
 
   afk:
     # Whether, and how, the clock pauses for a player who has stopped playing.
-    # AUTO       - use EssentialsX if it is installed, otherwise the built-in
-    #              idle timer. The default, and the only value that stays
-    #              correct on a server whose plugin list changes later.
+    # AUTO       - use EssentialsX if it is installed and its auto-afk is above
+    #              0, otherwise the built-in idle timer. EssentialsX only marks
+    #              players holding essentials.afk.auto (not granted by
+    #              default), so everyone else is also paused by the idle timer,
+    #              and a manual /afk always counts. The default, and the only
+    #              value that stays correct on a server whose plugin list
+    #              changes later.
     # ESSENTIALS - require EssentialsX. If it is absent, nobody is ever AFK.
     #              Said once in the log at startup rather than assumed.
+    #              EssentialsX only marks players holding essentials.afk.auto
+    #              on its own; everyone else is paused only by /afk.
     # BUILT_IN   - always use the idle timer below, even where EssentialsX is
     #              installed.
     # OFF        - never pause. A player who walks away accrues counted time.
     #              The honest choice on a server that would rather not guess,
     #              and the wrong one anywhere enforcement is on.
-    # An unrecognised value falls back to AUTO, named in the log.
+    # Write OFF in quotes, as "OFF": YAML reads a bare OFF as false, which is
+    # not a mode. An unrecognised value falls back to AUTO, named in the log.
+    # The detector in use is named in the log at startup and on every reload,
+    # and EssentialsX's auto-afk is read at those moments only.
     mode: AUTO
-    # BUILT_IN only (and AUTO where EssentialsX is absent): seconds without
-    # input before a player is treated as idle. Clamped to 30-3600. Below 30,
-    # reading a sign counts as going AFK; above 3600 nobody is ever detected as
-    # idle before they log off anyway.
+    # BUILT_IN, and AUTO wherever the idle timer applies: seconds without
+    # input before a player is treated as idle. Input is moving into another
+    # block, steering a vehicle other than a minecart, clicking, chatting or a
+    # command. Water streams, bubble columns and knockback look like walking
+    # and still count, so a player parked in a current never goes idle.
+    # Clamped to 30-3600. Below 30, reading a sign counts as going AFK; above
+    # 3600 nobody is ever detected as idle before they log off anyway.
     idle-seconds: 300
 
   # Minutes between writes of every counted window to disk. Clamped to 1-60.

@@ -14,6 +14,10 @@ author: Ninja6-MC
 # refuses a plugin without this flag and says so in the log ("not marked as supporting
 # Folia"), which the boot leg asserts on.
 folia-supported: true
+# Loads EssentialsX first when it is installed, so AFK detection can bind to it at enable.
+# The name is the one EssentialsX registers under. Never a hard depend: SessionPulse runs
+# without it on the built-in idle timer.
+softdepend: [Essentials]
 
 commands:
   spulse:
