@@ -49,8 +49,11 @@ import java.util.concurrent.atomic.AtomicLong;
  *       two operations and both callers could read the same mark.</li>
  *   <li>{@code afkSinceNanos} - {@code volatile}. Single writer (the session tick), many
  *       readers, no compound action.</li>
- *   <li>{@code firedMinutes} - a concurrent set. Written by the tick when a milestone
- *       fires, seeded on the main thread at join and at reload.</li>
+ *   <li>{@code firedMinutes} - a concurrent set, added to and never removed from. Written by
+ *       the tick when a milestone is claimed, and seeded at join and at reload from whichever
+ *       thread ran them, which on Folia is a region thread rather than the main one. Seeding
+ *       racing a claim can only turn the claim into a no-op, never repeat it, because
+ *       {@link #markFired(int)} has exactly one winner.</li>
  * </ul>
  */
 public final class PlayerSession {

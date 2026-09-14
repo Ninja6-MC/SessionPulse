@@ -50,6 +50,22 @@ public final class RecordingScheduler implements Scheduler {
     public final List<Entity> entityTargets = new ArrayList<>();
 
     /**
+     * When {@code true}, {@link #entity} queues instead of running inline, and the queue waits
+     * for {@link #runEntity()} or {@link #retireEntity()}. That is how a test puts ticks between
+     * a claim and its delivery, which inline execution hides.
+     */
+    public boolean deferEntity;
+
+    /**
+     * {@code true} only while an entity task body is running. A test double for a player reads
+     * it to prove a call happened on the region and not on the tick.
+     */
+    public boolean inEntity;
+
+    /** Entity tasks waiting while {@link #deferEntity} is set, oldest first, as task and retired. */
+    private final List<Runnable[]> pendingEntity = new ArrayList<>();
+
+    /**
      * One-shots waiting for {@link #runOnce()}, oldest first.
      *
      * <p>Kept apart from {@link #scheduled}: a one-shot queued from inside a repeating
@@ -71,8 +87,15 @@ public final class RecordingScheduler implements Scheduler {
 
     @Override
     public void entity(Entity entity, Runnable task, Runnable retired) {
+        if (retired == null) {
+            throw new NullPointerException("retired must not be null; pass () -> {}");
+        }
         entityTargets.add(entity);
-        task.run();
+        if (deferEntity) {
+            pendingEntity.add(new Runnable[] {task, retired});
+        } else {
+            runAsEntity(task);
+        }
     }
 
     @Override
@@ -94,6 +117,40 @@ public final class RecordingScheduler implements Scheduler {
                 recorded.runs++;
                 recorded.body.run();
             }
+        }
+    }
+
+    /**
+     * Runs every deferred entity task, as though each player were still there.
+     *
+     * @return how many ran
+     */
+    public int runEntity() {
+        List<Runnable[]> batch = new ArrayList<>(pendingEntity);
+        pendingEntity.clear();
+        batch.forEach(pair -> runAsEntity(pair[0]));
+        return batch.size();
+    }
+
+    /**
+     * Runs the retired callback of every deferred entity task instead of its body, as though
+     * each player had left first.
+     *
+     * @return how many were retired
+     */
+    public int retireEntity() {
+        List<Runnable[]> batch = new ArrayList<>(pendingEntity);
+        pendingEntity.clear();
+        batch.forEach(pair -> pair[1].run());
+        return batch.size();
+    }
+
+    private void runAsEntity(Runnable task) {
+        inEntity = true;
+        try {
+            task.run();
+        } finally {
+            inEntity = false;
         }
     }
 

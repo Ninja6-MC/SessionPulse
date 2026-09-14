@@ -11,8 +11,8 @@ import org.bukkit.entity.Player;
  * player - send a message, play a sound, disconnect them - is handed to
  * {@code Scheduler#entity} for the region that owns them.
  *
- * <p>No observer is registered in this issue. Nothing this plugin does yet puts anything on
- * a player's screen.
+ * <p>The milestone observer is registered today; overtime and enforcement register theirs
+ * alongside it.
  */
 @FunctionalInterface
 public interface SessionObserver {

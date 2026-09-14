@@ -374,7 +374,7 @@ class SessionTrackerTest {
         clock.advance(Duration.ofMinutes(90));
         tracker.accrue(uuid, false);
         assertTrue(tracker.session(uuid).firedMinutes().isEmpty(),
-                "nothing has fired: this issue registers no observer");
+                "accrual alone fires nothing; only a claim does, and none is made here");
 
         config = TestConfigs.parse("""
                 reminders:
