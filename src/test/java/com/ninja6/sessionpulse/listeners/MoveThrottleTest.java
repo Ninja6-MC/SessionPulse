@@ -12,6 +12,7 @@ import java.lang.reflect.Proxy;
 import java.util.List;
 import java.util.UUID;
 import org.bukkit.Location;
+import org.bukkit.entity.Minecart;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Vehicle;
 import org.bukkit.event.player.PlayerMoveEvent;
@@ -92,14 +93,28 @@ class MoveThrottleTest {
         assertFalse(countedAsInput(() -> move(at(10.5, 64, 10.5, 0f, 0f), null)));
     }
 
-    @Test
-    @DisplayName("a ridden vehicle crossing a block counts for the rider, and not within a block")
-    void vehicleMovesCountForTheRider() {
-        Vehicle boat = (Vehicle) Proxy.newProxyInstance(Vehicle.class.getClassLoader(),
-                new Class<?>[] {Vehicle.class}, (proxy, method, args) -> switch (method.getName()) {
+    private Vehicle ridden(Class<? extends Vehicle> type) {
+        return (Vehicle) Proxy.newProxyInstance(type.getClassLoader(),
+                new Class<?>[] {type}, (proxy, method, args) -> switch (method.getName()) {
                     case "getPassengers" -> List.of(player);
                     default -> throw new UnsupportedOperationException(method.getName());
                 });
+    }
+
+    @Test
+    @DisplayName("a minecart crossing a block does not count; rails move it, not the rider")
+    void minecartMovesDoNotCount() {
+        Vehicle minecart = ridden(Minecart.class);
+
+        assertFalse(countedAsInput(() -> listener.onVehicleMove(
+                new VehicleMoveEvent(minecart, at(1.5, 62, 1.5, 0f, 0f), at(2.5, 62, 1.5, 0f, 0f)))),
+                "a powered-rail loop would keep its rider active for ever");
+    }
+
+    @Test
+    @DisplayName("a ridden vehicle crossing a block counts for the rider, and not within a block")
+    void vehicleMovesCountForTheRider() {
+        Vehicle boat = ridden(Vehicle.class);
 
         assertTrue(countedAsInput(() -> listener.onVehicleMove(
                 new VehicleMoveEvent(boat, at(1.5, 62, 1.5, 0f, 0f), at(2.5, 62, 1.5, 0f, 0f)))));

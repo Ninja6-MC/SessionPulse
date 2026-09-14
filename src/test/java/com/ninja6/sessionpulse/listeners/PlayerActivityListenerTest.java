@@ -177,17 +177,20 @@ class PlayerActivityListenerTest {
     @DisplayName("a quit clears the player from the EssentialsX detector as well as the timer")
     void aQuitForgetsFromBothDetectors() {
         scheduler.deferEntity = true;
-        essentials = new FakeEssentials(scheduler, 300);
+        FakeEssentials fake = new FakeEssentials(scheduler, 300);
+        essentials = fake;
         service.resolve();
         listener.onPlayerJoin(new PlayerJoinEvent(player, "joined"));
+        fake.user(uuid).afk = true;
         service.isAfk(player);
+        scheduler.runEntity();
+        assertTrue(service.isAfk(player), "cached as AFK by EssentialsX before the quit");
 
         listener.onPlayerQuit(new PlayerQuitEvent(player, "bye"));
         clock.advanceSeconds(300);
-        service.isAfk(player);
 
         assertFalse(builtIn.isAfk(player), "the timer forgot them");
-        assertEquals(2, scheduler.entityTargets.size(), "the queued refresh was released");
+        assertFalse(service.isAfk(player), "the EssentialsX detector forgot them");
     }
 
     @Test

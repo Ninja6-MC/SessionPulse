@@ -73,8 +73,10 @@ adheres to [Semantic Versioning](https://semver.org/).
   `tracking.afk.mode` says. AUTO uses EssentialsX where it is installed with `auto-afk`
   above 0, and the built-in idle timer otherwise; players without `essentials.afk.auto`
   are also paused by the idle timer, and a manual `/afk` always counts. The idle timer
-  counts moving into another block, clicks, inventory clicks, chat and commands, but not
-  head rotation or pressure plates. EssentialsX is reached by reflection on the player's
+  counts moving into another block, steering a vehicle, clicks, inventory clicks, chat and
+  commands, but not head rotation, pressure plates or riding a minecart. Water streams,
+  bubble columns and knockback arrive as ordinary movement and still count, so a player
+  parked in a current is not detected by the idle timer. EssentialsX is reached by reflection on the player's
   own region, so a server without it, or one that removes it mid-run, falls back rather
   than failing. The detector in force is named in the log at startup and on reload.
   `plugin.yml` soft-depends on `Essentials`.

@@ -85,7 +85,8 @@ class AfkResolutionTest {
         essentials(300);
 
         assertInstanceOf(EssentialsAfkDetector.class, resolve("ESSENTIALS"));
-        assertOnlyLine(Level.INFO, "AFK detection: EssentialsX (auto-afk 300s).");
+        assertOnlyLine(Level.INFO, "AFK detection: EssentialsX (auto-afk 300s; only players with "
+                + "essentials.afk.auto are marked automatically, others only by /afk).");
     }
 
     @Test

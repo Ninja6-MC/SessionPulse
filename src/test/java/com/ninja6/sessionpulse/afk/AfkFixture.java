@@ -109,6 +109,15 @@ public final class AfkFixture {
      */
     public static Player player(UUID uuid, String name, boolean hasAutoAfk,
                                 RecordingScheduler scheduler, int[] violations) {
+        return player(uuid, name, hasAutoAfk, scheduler, violations, new boolean[] {true});
+    }
+
+    /**
+     * The same player, whose {@code isValid} answers {@code valid[0]}, so a test can make them
+     * leave while a refresh is queued.
+     */
+    public static Player player(UUID uuid, String name, boolean hasAutoAfk,
+                                RecordingScheduler scheduler, int[] violations, boolean[] valid) {
         Server server = (Server) Proxy.newProxyInstance(Server.class.getClassLoader(),
                 new Class<?>[] {Server.class}, (proxy, method, args) -> switch (method.getName()) {
                     case "getOnlinePlayers" -> List.of();
@@ -122,6 +131,7 @@ public final class AfkFixture {
                     case "getUniqueId" -> uuid;
                     case "getName" -> name;
                     case "getServer" -> server;
+                    case "isValid" -> valid[0];
                     case "hasPermission" -> {
                         if (!scheduler.inEntity) {
                             violations[0]++;

@@ -5,6 +5,7 @@ import com.ninja6.sessionpulse.afk.BuiltInAfkDetector;
 import com.ninja6.sessionpulse.afk.EssentialsLookup;
 import org.bukkit.Location;
 import org.bukkit.entity.Entity;
+import org.bukkit.entity.Minecart;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -29,11 +30,18 @@ import org.bukkit.event.vehicle.VehicleMoveEvent;
  *
  * <h2>What counts as input</h2>
  *
- * <p>Something the player did: walking into another block, riding into one, clicking a block
- * or the air, clicking in an inventory, chatting, typing a command. Turning the head does not
- * count, or a player could stay active by nudging the mouse, and neither does moving within a
- * block. A pressure plate or tripwire underfoot does not count either; it fires an interact
- * with no input at all. Nothing the server does to a player counts.
+ * <p>Something the player did: walking into another block, steering a vehicle into one,
+ * clicking a block or the air, clicking in an inventory, chatting, typing a command. Turning
+ * the head does not count, or a player could stay active by nudging the mouse, and neither
+ * does moving within a block. A pressure plate or tripwire underfoot does not count; it fires
+ * an interact with no input at all. Nor does a minecart, which rails move and a rider cannot
+ * steer.
+ *
+ * <p><strong>What still counts without input.</strong> Water streams, bubble columns and
+ * knockback are simulated by the client and arrive as ordinary move packets, which this
+ * listener cannot tell from a player walking. A player parked in a water current keeps
+ * crossing blocks and is never idle to this timer, and neither is one in a boat the current
+ * carries.
  *
  * <p>Cancelled events still count, which is why no handler sets {@code ignoreCancelled}. A
  * movement another plugin refused, such as EssentialsX freezing an AFK player, is still the
@@ -79,12 +87,15 @@ public final class PlayerActivityListener implements Listener {
     /**
      * Counts a ridden vehicle moving into another block, for each player riding it. A rider
      * fires no {@link PlayerMoveEvent}, so without this a player steering a boat goes AFK.
+     * Minecarts are skipped: a powered-rail loop would otherwise keep its rider active for
+     * ever.
      *
      * @param event the vehicle move
      */
     @EventHandler(priority = EventPriority.MONITOR)
     public void onVehicleMove(VehicleMoveEvent event) {
-        if (!changedBlock(event.getFrom(), event.getTo())) {
+        if (event.getVehicle() instanceof Minecart
+                || !changedBlock(event.getFrom(), event.getTo())) {
             return;
         }
         for (Entity passenger : event.getVehicle().getPassengers()) {

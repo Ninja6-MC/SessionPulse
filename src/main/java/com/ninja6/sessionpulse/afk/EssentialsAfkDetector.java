@@ -48,12 +48,18 @@ import java.util.logging.Logger;
  *
  * <h2>When EssentialsX breaks</h2>
  *
- * <p>A linkage error, a reflection error or a class cast means the binding no longer fits the
- * EssentialsX on the server, and will not start fitting again. The detector goes dead: it
- * says so once, schedules nothing more, and answers as though the hook had never bound -
- * the built-in timer in AUTO, nobody in ESSENTIALS. Anything else EssentialsX throws, and a
- * {@code null} user, which it returns while starting or stopping, costs that one refresh:
- * the player is cached as not AFK and the next tick asks again.
+ * <p>A reflective call that fails in itself - a missing or inaccessible method, a result of
+ * the wrong type - or a linkage error from inside EssentialsX means the binding no longer
+ * fits the EssentialsX on the server, and will not start fitting again. The detector goes
+ * dead: it says so once, schedules nothing more, and answers as though the hook had never
+ * bound - the built-in timer in AUTO, nobody in ESSENTIALS. Any other exception from inside
+ * EssentialsX's own code is one bad refresh, not a broken binding, and so is a {@code null}
+ * user, which it returns while starting or stopping: the player is cached as not AFK, a
+ * failure is reported once, and the next tick asks again.
+ *
+ * <p>A refresh still queued when its player leaves is left to run or retire. {@link #forget}
+ * drops only the cached verdict, and the refresh checks the player is still valid before it
+ * caches anything, so a departed player is not cached again.
  */
 public final class EssentialsAfkDetector implements AfkDetector {
 
@@ -68,7 +74,7 @@ public final class EssentialsAfkDetector implements AfkDetector {
         final Method isAfk;
         final long autoAfkSeconds;
 
-        private Hook(Object essentials, Method getUser, Method isAfk, long autoAfkSeconds) {
+        Hook(Object essentials, Method getUser, Method isAfk, long autoAfkSeconds) {
             this.essentials = essentials;
             this.getUser = getUser;
             this.isAfk = isAfk;
@@ -156,10 +162,13 @@ public final class EssentialsAfkDetector implements AfkDetector {
         }
     }
 
+    /**
+     * Drops the cached verdict. A queued refresh keeps its pending mark until it runs or
+     * retires, so a player never has two queued at once.
+     */
     @Override
     public void forget(UUID uuid) {
         cached.remove(uuid);
-        refreshPending.remove(uuid);
     }
 
     /** Whether a broken binding has stopped the detector. */
@@ -186,7 +195,9 @@ public final class EssentialsAfkDetector implements AfkDetector {
     /** Region thread. The only place EssentialsX is called after the bind. */
     private void refresh(Player player, UUID uuid) {
         try {
-            if (dead.get()) {
+            if (dead.get() || !player.isValid()) {
+                // Region thread, so the validity read is safe. A player who left while this
+                // was queued must not be cached again after forget.
                 return;
             }
             Object user = hook.getUser.invoke(hook.essentials, player);
@@ -216,15 +227,19 @@ public final class EssentialsAfkDetector implements AfkDetector {
     }
 
     /**
-     * Whether a failure means the binding itself no longer fits. What a reflective call throws
-     * arrives wrapped, so the cause is what is judged.
+     * Whether a failure means the binding itself no longer fits.
+     *
+     * <p>What EssentialsX's own code throws arrives wrapped in
+     * {@link InvocationTargetException}, and of that only a linkage error - a class missing or
+     * changed underneath it - is permanent. Unwrapped, the failure is the reflective call itself
+     * or the cast of its result, which would repeat on every call.
      */
     private static boolean isBrokenBinding(Throwable thrown) {
-        Throwable cause = thrown instanceof InvocationTargetException && thrown.getCause() != null
-                ? thrown.getCause()
-                : thrown;
-        return cause instanceof LinkageError
-                || cause instanceof ReflectiveOperationException
-                || cause instanceof ClassCastException;
+        if (thrown instanceof InvocationTargetException) {
+            return thrown.getCause() instanceof LinkageError;
+        }
+        return thrown instanceof LinkageError
+                || thrown instanceof ReflectiveOperationException
+                || thrown instanceof ClassCastException;
     }
 }

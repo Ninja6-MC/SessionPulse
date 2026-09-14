@@ -59,15 +59,40 @@ class AfkWiringTest {
     }
 
     @Test
-    @DisplayName("the plugin registers the activity listener, resolves at enable and on reload")
-    void thePluginRegistersAndResolves() {
-        String code = pluginCode();
+    @DisplayName("onEnable registers the listener, then resolves, then schedules the tick")
+    void onEnableRegistersThenResolvesThenSchedules() {
+        String onEnable = body(pluginCode(), "public void onEnable()");
 
-        assertTrue(code.contains("new PlayerActivityListener(afk)"));
-        int reload = code.indexOf("public void reload()");
-        assertTrue(reload >= 0);
-        assertTrue(code.indexOf("afk.resolve()") < reload, "resolved at enable");
-        assertTrue(code.indexOf("afk.resolve()", reload) > reload, "resolved on reload");
+        int listener = onEnable.indexOf("new PlayerActivityListener(afk)");
+        int resolve = onEnable.indexOf("afk.resolve()");
+        int tick = onEnable.indexOf("globalRepeating(");
+        assertTrue(listener >= 0, "onEnable does not register the activity listener");
+        assertTrue(resolve > listener,
+                "resolved before the listener exists, an EssentialsX disable in between is missed");
+        assertTrue(tick > resolve, "the tick would run on nobody-is-AFK until something resolved");
+    }
+
+    @Test
+    @DisplayName("reload re-resolves")
+    void reloadResolves() {
+        assertTrue(body(pluginCode(), "public void reload()").contains("afk.resolve()"));
+    }
+
+    /** The brace-delimited body of the method whose declaration starts with {@code signature}. */
+    private static String body(String code, String signature) {
+        int at = code.indexOf(signature);
+        assertTrue(at >= 0, signature + " not found");
+        int open = code.indexOf('{', at);
+        int depth = 0;
+        for (int i = open; i < code.length(); i++) {
+            char c = code.charAt(i);
+            if (c == '{') {
+                depth++;
+            } else if (c == '}' && --depth == 0) {
+                return code.substring(open, i + 1);
+            }
+        }
+        throw new AssertionError("unbalanced braces after " + signature);
     }
 
     @Test

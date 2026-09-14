@@ -33,8 +33,7 @@ import java.util.logging.Logger;
  *       failed</td></tr>
  * </table>
  *
- * <p>Every resolve logs one line naming the result, so an operator can read the mode off the
- * log. Nothing here throws: a failure to find or bind EssentialsX is one of the rows above.
+ * <p>Every resolve names the result in the log, so an operator can read the mode off it. Nothing here throws: a failure to find or bind EssentialsX is one of the rows above.
  *
  * <h2>When it runs</h2>
  *
@@ -169,7 +168,9 @@ public final class AfkService implements AfkGate {
         }
         current = new EssentialsAfkDetector(hook, null, scheduler, logger);
         if (hook.autoAfkSeconds > 0) {
-            logger.info("AFK detection: EssentialsX (auto-afk " + hook.autoAfkSeconds + "s).");
+            logger.info("AFK detection: EssentialsX (auto-afk " + hook.autoAfkSeconds
+                    + "s; only players with " + EssentialsAfkDetector.AUTO_AFK_PERMISSION
+                    + " are marked automatically, others only by /afk).");
         } else {
             logger.warning("AFK detection: EssentialsX, but its auto-afk is disabled; only /afk "
                     + "will pause the clock.");

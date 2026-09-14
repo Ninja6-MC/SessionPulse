@@ -31,7 +31,9 @@ class EssentialsHookVanishesTest {
     private final BuiltInAfkDetector builtIn = new BuiltInAfkDetector(clock, () -> config);
     private final FakeEssentials fake = new FakeEssentials(scheduler, 300);
     private final UUID uuid = UUID.randomUUID();
-    private final Player player = AfkFixture.player(uuid, "Ada", false, scheduler, violations);
+    private final boolean[] valid = {true};
+    private final Player player =
+            AfkFixture.player(uuid, "Ada", false, scheduler, violations, valid);
 
     @AfterEach
     void essentialsWasOnlyCalledOnTheRegion() {
@@ -164,7 +166,7 @@ class EssentialsHookVanishesTest {
     }
 
     @Test
-    @DisplayName("forget frees a queued refresh and drops the cached verdict")
+    @DisplayName("forget drops the cached verdict and leaves a queued refresh as the only one")
     void forgetClearsThePlayer() throws Exception {
         scheduler.deferEntity = true;
         EssentialsAfkDetector detector = bind(scheduler);
@@ -175,7 +177,60 @@ class EssentialsHookVanishesTest {
         detector.forget(uuid);
 
         assertFalse(detector.isAfk(player), "the cached verdict went with the player");
-        assertEquals(3, scheduler.entityTargets.size(), "the pending refresh went with them too");
+        assertEquals(2, scheduler.entityTargets.size(),
+                "the refresh queued before forget is still the one queued; no second joins it");
+    }
+
+    @Test
+    @DisplayName("a refresh that runs after its player left caches nothing")
+    void aRefreshForADepartedPlayerCachesNothing() throws Exception {
+        scheduler.deferEntity = true;
+        EssentialsAfkDetector detector = bind(scheduler);
+        fake.user(uuid).afk = true;
+
+        detector.isAfk(player);
+        detector.forget(uuid);
+        valid[0] = false;
+        scheduler.runEntity();
+
+        assertFalse(detector.isAfk(player), "the departed player was cached again");
+        assertEquals(0, fake.getUserCalls, "EssentialsX was not asked about a departed player");
+    }
+
+    @Test
+    @DisplayName("a ClassCastException from inside EssentialsX is transient, not a broken binding")
+    void aWrappedClassCastIsTransient() throws Exception {
+        scheduler.deferEntity = true;
+        EssentialsAfkDetector detector = bind(scheduler);
+        fake.user(uuid).afk = true;
+        fake.getUserThrows = new ClassCastException("one player's userdata");
+
+        for (int i = 0; i < 5; i++) {
+            assertFalse(tick(detector));
+        }
+        assertFalse(detector.isDead(), "one player's bad data must not stop detection for everyone");
+        assertEquals(1, log.at(Level.WARNING).size());
+
+        fake.getUserThrows = null;
+        tick(detector);
+        assertTrue(tick(detector));
+    }
+
+    @Test
+    @DisplayName("a result of the wrong type is a broken binding")
+    void aDirectCastFailureKillsTheDetector() throws Exception {
+        scheduler.deferEntity = true;
+        EssentialsAfkDetector.Hook hook = EssentialsAfkDetector.Hook.bind(fake);
+        EssentialsAfkDetector detector = new EssentialsAfkDetector(
+                new EssentialsAfkDetector.Hook(fake, hook.getUser,
+                        FakeEssentials.User.class.getMethod("toString"), 300L),
+                null, scheduler, log.logger);
+
+        tick(detector);
+        tick(detector);
+
+        assertTrue(detector.isDead(), "a String where a boolean belongs repeats on every call");
+        assertEquals(1, log.at(Level.WARNING).size());
     }
 
     @Test
