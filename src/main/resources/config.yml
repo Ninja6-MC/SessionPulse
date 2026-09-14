@@ -100,15 +100,15 @@ reminders:
       title: "<yellow>Eye break</yellow>"
       subtitle: "<gray>20 seconds, 20 feet</gray>"
 
-  # The repeating reminder that runs on after the one-time milestones above have
-  # all fired. The marathon safety net, not the ordinary path.
+  # The repeating reminder, counted on its own schedule and independent of the
+  # milestones above. The marathon safety net, not the ordinary path.
   overtime:
     # Off by default. A server that wants something said at 60 and 120 minutes
     # uses milestones; this is for saying something for as long as somebody is
     # still online.
     enabled: false
     # Counted-window minutes before the first overtime reminder. Clamped to
-    # 1-10080. Set it above your last milestone or the two will overlap.
+    # 1-10080. If it lands on a milestone minute, the milestone is sent first.
     after-minutes: 180
     # Minutes between reminders after that. Clamped to 1-1440. The floor of 1 is
     # not cosmetic: a 0 would schedule a reminder every tick. Above 1440 (a day)

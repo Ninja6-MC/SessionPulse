@@ -1,7 +1,7 @@
 package com.ninja6.sessionpulse.config;
 
 /**
- * The repeating reminder that runs after the one-time milestones have all fired.
+ * The repeating reminder, counted on its own schedule and independent of the milestones.
  *
  * <p>Off by default. It is the marathon safety net, not the ordinary path: a server that
  * wants to say something at 60 and 120 minutes uses milestones, and a server that wants to

@@ -27,14 +27,14 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * {@link MilestoneObserver}: claimed on the tick, delivered through the entity scheduler, and
+ * {@link ReminderObserver}: claimed on the tick, delivered through the entity scheduler, and
  * never delivered to an exempt player.
  *
  * <p>The player is a {@link Proxy} answering only what the observer and the recording
  * scheduler ask of it, so an observer that starts reaching further into Bukkit fails here.
  * Every permission read is stamped with whether it happened inside an entity task.
  */
-class MilestoneObserverTest {
+class ReminderObserverTest {
 
     private static final String CONFIG = """
             reminders:
@@ -50,6 +50,36 @@ class MilestoneObserverTest {
                   message: "<green>sixty-one</green>"
                 - minute: 120
                   message: "<green>two hours</green>"
+            """;
+
+    /** A milestone at 180 on every channel, and overtime from 180 every 30 minutes. */
+    private static final String OVERTIME_CONFIG = """
+            reminders:
+              prefix: ""
+              milestones:
+                - minute: 180
+                  message: "<green>three hours</green>"
+                  action-bar: "<aqua>bar</aqua>"
+                  title: "<gold>top</gold>"
+                  subtitle: "<gold>bottom</gold>"
+                  sound: BLOCK_NOTE_BLOCK_CHIME
+              overtime:
+                enabled: true
+                after-minutes: 180
+                every-minutes: 30
+                message: "<red>over <minutes> <hours> <player></red>"
+            """;
+
+    /** The same overtime with no milestones at all. */
+    private static final String OVERTIME_ONLY_CONFIG = """
+            reminders:
+              prefix: ""
+              milestones: []
+              overtime:
+                enabled: true
+                after-minutes: 180
+                every-minutes: 30
+                message: "<red>over <minutes> <hours> <player></red>"
             """;
 
     /** What one delivery of the minute-60 milestone looks like, at a window of 60 minutes. */
@@ -86,15 +116,14 @@ class MilestoneObserverTest {
         }
     };
 
-    private final PluginConfig config = new PluginConfig(
-            YamlConfiguration.loadConfiguration(new StringReader(CONFIG)));
+    private PluginConfig config = parse(CONFIG);
     private final SessionTracker tracker = new SessionTracker(() -> config, clock, store);
     private final RecordingScheduler scheduler = new RecordingScheduler();
     private final TestNotifiers.RecordingAudience audience = new TestNotifiers.RecordingAudience();
     private final Notifier notifier = TestNotifiers.recording(() -> config, audience);
 
     private final List<String> flushOrder = new ArrayList<>();
-    private final MilestoneObserver observer = new MilestoneObserver(tracker, scheduler, notifier,
+    private final ReminderObserver observer = new ReminderObserver(tracker, scheduler, notifier,
             () -> flushOrder.add("flush with window " + saved.get(this.uuid).windowSeconds()));
 
     private boolean exempt;
@@ -105,7 +134,7 @@ class MilestoneObserverTest {
             new Class<?>[] {Player.class}, (proxy, method, args) -> switch (method.getName()) {
                 case "hasPermission" -> {
                     permissionReadInEntity.add(scheduler.inEntity);
-                    yield exempt && MilestoneObserver.EXEMPT_PERMISSION.equals(args[0]);
+                    yield exempt && ReminderObserver.EXEMPT_PERMISSION.equals(args[0]);
                 }
                 case "getUniqueId" -> uuid;
                 case "equals" -> proxy == args[0];
@@ -113,6 +142,10 @@ class MilestoneObserverTest {
                 case "toString" -> "Ada";
                 default -> throw new UnsupportedOperationException(method.getName());
             });
+
+    private static PluginConfig parse(String yaml) {
+        return new PluginConfig(YamlConfiguration.loadConfiguration(new StringReader(yaml)));
+    }
 
     /** One session tick for the player, after {@code played} of real time. */
     private PlayerSession tick(Duration played) {
@@ -249,5 +282,94 @@ class MilestoneObserverTest {
         assertEquals(SIXTY.get(0), audience.calls().get(0),
                 "fifty stored minutes plus ten played; not the ten-minute session, and not the "
                         + "window by the time the region ran");
+    }
+
+    @Test
+    @DisplayName("a milestone and overtime on the same minute go out in one task, milestone first")
+    void sameMinuteMilestoneThenOvertime() {
+        config = parse(OVERTIME_CONFIG);
+        tracker.onJoin(uuid, "Ada");
+
+        tick(Duration.ofMinutes(180));
+
+        assertEquals(1, scheduler.entityTargets.size(), "two tasks would leave the order to Folia");
+        assertEquals(List.of(
+                "chat:§athree hours", "actionBar:§bbar", "title:§6top/§6bottom",
+                "sound:minecraft:block.note_block.chime", "chat:§cover 180 3.0 Ada"),
+                audience.calls(),
+                "every milestone channel first, then the overtime chat line, and neither replaces "
+                        + "the other");
+    }
+
+    @Test
+    @DisplayName("an overtime reminder alone is one task and one chat line, text fixed at the claim")
+    void overtimeAloneCapturesPlaceholdersAtClaim() {
+        config = parse(OVERTIME_CONFIG);
+        tracker.onJoin(uuid, "Ada");
+        tick(Duration.ofMinutes(180));
+        int before = audience.calls().size();
+        scheduler.deferEntity = true;
+
+        tick(Duration.ofMinutes(30));
+        tick(Duration.ofMinutes(7));
+
+        assertEquals(2, scheduler.entityTargets.size(), "one task at 180, one at 210");
+        assertEquals(1, scheduler.runEntity());
+        assertEquals(List.of("chat:§cover 210 3.5 Ada"),
+                audience.calls().subList(before, audience.calls().size()),
+                "read at delivery, the window would say 217");
+    }
+
+    @Test
+    @DisplayName("an exempt player's reminder is consumed, and losing the exemption does not replay it")
+    void exemptOvertimeConsumed() {
+        config = parse(OVERTIME_CONFIG);
+        tracker.onJoin(uuid, "Ada");
+        tick(Duration.ofSeconds(179 * 60 + 59));
+        exempt = true;
+
+        tick(Duration.ofSeconds(1));
+        exempt = false;
+        tick(Duration.ofSeconds(1));
+        tick(Duration.ofSeconds(30 * 60 - 2));
+
+        assertTrue(audience.calls().isEmpty(),
+                "a claim held back while exempt would be sent here: " + audience.calls());
+        assertFalse(permissionReadInEntity.contains(false),
+                "a permission read on the global tick touches player data off its region");
+
+        tick(Duration.ofSeconds(1));
+        assertEquals(List.of("chat:§cover 210 3.5 Ada"), audience.calls());
+    }
+
+    @Test
+    @DisplayName("an overtime claim checkpoints the reached window, then requests a flush")
+    void overtimeClaimCheckpointsBeforeFlush() {
+        config = parse(OVERTIME_ONLY_CONFIG);
+        tracker.onJoin(uuid, "Ada");
+
+        tick(Duration.ofSeconds(180 * 60 + 5));
+        tick(Duration.ofSeconds(1));
+
+        assertEquals(List.of("flush with window 10805"), flushOrder,
+                "one flush per claiming tick, requested after the reached window was stored");
+    }
+
+    @Test
+    @DisplayName("a reminder lost to a quit before the region runs is not sent after the rejoin")
+    void retiredOvertimeNotResent() {
+        config = parse(OVERTIME_ONLY_CONFIG);
+        tracker.onJoin(uuid, "Ada");
+        scheduler.deferEntity = true;
+
+        tick(Duration.ofMinutes(180));
+        assertEquals(1, scheduler.retireEntity());
+        tracker.onQuit(uuid);
+        tracker.onJoin(uuid, "Ada");
+        scheduler.deferEntity = false;
+        tick(Duration.ofSeconds(29 * 60 + 59));
+
+        assertTrue(audience.calls().isEmpty());
+        assertEquals(1, scheduler.entityTargets.size(), "the rejoin must not re-arm minute 180");
     }
 }

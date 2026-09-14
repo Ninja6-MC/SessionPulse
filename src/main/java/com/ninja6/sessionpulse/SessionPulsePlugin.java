@@ -2,7 +2,7 @@ package com.ninja6.sessionpulse;
 
 import com.ninja6.sessionpulse.config.PluginConfig;
 import com.ninja6.sessionpulse.listeners.PlayerConnectionListener;
-import com.ninja6.sessionpulse.milestone.MilestoneObserver;
+import com.ninja6.sessionpulse.milestone.ReminderObserver;
 import com.ninja6.sessionpulse.notify.Notifier;
 import com.ninja6.sessionpulse.notify.Placeholders;
 import com.ninja6.sessionpulse.platform.FoliaLibScheduler;
@@ -116,13 +116,13 @@ public class SessionPulsePlugin extends JavaPlugin {
         // for everyone still online, so a crash cannot leave it hours stale.
         storage.startFlushing(tracker::snapshotAll);
 
-        // AfkGate.NEVER until the AFK issue supplies the real gate. Milestones are the first
-        // observer; overtime and enforcement add theirs. storage::flushAsync, so a claimed
-        // milestone reaches disk ahead of the periodic flush and a crash cannot refire it.
-        SessionObserver milestones =
-                new MilestoneObserver(tracker, scheduler, notifier, storage::flushAsync);
+        // AfkGate.NEVER until the AFK issue supplies the real gate. Milestones and overtime
+        // share the first observer; enforcement adds its own. storage::flushAsync, so a
+        // claimed reminder reaches disk ahead of the periodic flush and a crash cannot refire it.
+        SessionObserver reminders =
+                new ReminderObserver(tracker, scheduler, notifier, storage::flushAsync);
         this.sessionTick = scheduler.globalRepeating(
-                new SessionTickTask(tracker, AfkGate.NEVER, List.of(milestones), getLogger()),
+                new SessionTickTask(tracker, AfkGate.NEVER, List.of(reminders), getLogger()),
                 SessionTickTask.DELAY_TICKS, SessionTickTask.PERIOD_TICKS);
 
         getLogger().info("SessionPulse enabled (scheduler: " + scheduler.platformName() + ").");
