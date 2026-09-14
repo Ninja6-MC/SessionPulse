@@ -5,16 +5,20 @@ import java.util.Locale;
 /**
  * How the session clock decides a player has stopped playing.
  *
- * <p>Named here rather than in the AFK issue because {@code tracking.afk.mode} is parsed
- * at load and a config class cannot validate a value it has no type for. The detection
- * itself lands with that issue; this enum is only the vocabulary the file may use.
+ * <p>Named here rather than beside the detectors because {@code tracking.afk.mode} is parsed
+ * at load and a config class cannot validate a value it has no type for. This enum is only
+ * the vocabulary the file may use; {@code afk.AfkService} turns it into a detector.
  */
 public enum AfkMode {
 
     /**
-     * Use EssentialsX if it is installed, otherwise the built-in detector. The default,
-     * and the only value that is correct on a server whose plugin list changes later:
-     * ESSENTIALS on a server that then removes EssentialsX silently stops pausing anyone.
+     * Use EssentialsX if it is installed and its {@code auto-afk} is enabled, otherwise the
+     * built-in detector. Where EssentialsX is used, a player without
+     * {@code essentials.afk.auto} - which EssentialsX needs before it marks anyone AFK on its
+     * own, and does not grant by default - is also paused by the built-in timer, and a manual
+     * {@code /afk} always counts. The default, and the only value that is correct on a server
+     * whose plugin list changes later: ESSENTIALS on a server that then removes EssentialsX
+     * silently stops pausing anyone.
      */
     AUTO,
 

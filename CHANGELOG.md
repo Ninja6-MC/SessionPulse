@@ -69,3 +69,12 @@ adheres to [Semantic Versioning](https://semver.org/).
   milestone is sent first, on all of its channels including title and action bar, and the
   overtime chat line after it. Enabling or lowering overtime mid-session starts at the next
   point on the series.
+- AFK awareness: the counted window pauses for a player who has stopped playing, as
+  `tracking.afk.mode` says. AUTO uses EssentialsX where it is installed with `auto-afk`
+  above 0, and the built-in idle timer otherwise; players without `essentials.afk.auto`
+  are also paused by the idle timer, and a manual `/afk` always counts. The idle timer
+  counts moving into another block, clicks, inventory clicks, chat and commands, but not
+  head rotation or pressure plates. EssentialsX is reached by reflection on the player's
+  own region, so a server without it, or one that removes it mid-run, falls back rather
+  than failing. The detector in force is named in the log at startup and on reload.
+  `plugin.yml` soft-depends on `Essentials`.

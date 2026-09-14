@@ -1,13 +1,16 @@
 package com.ninja6.sessionpulse;
 
+import com.ninja6.sessionpulse.afk.AfkService;
+import com.ninja6.sessionpulse.afk.BuiltInAfkDetector;
+import com.ninja6.sessionpulse.afk.EssentialsLookup;
 import com.ninja6.sessionpulse.config.PluginConfig;
+import com.ninja6.sessionpulse.listeners.PlayerActivityListener;
 import com.ninja6.sessionpulse.listeners.PlayerConnectionListener;
 import com.ninja6.sessionpulse.reminder.ReminderObserver;
 import com.ninja6.sessionpulse.notify.Notifier;
 import com.ninja6.sessionpulse.notify.Placeholders;
 import com.ninja6.sessionpulse.platform.FoliaLibScheduler;
 import com.ninja6.sessionpulse.platform.Scheduler;
-import com.ninja6.sessionpulse.session.AfkGate;
 import com.ninja6.sessionpulse.session.SessionClock;
 import com.ninja6.sessionpulse.session.PlayerSession;
 import com.ninja6.sessionpulse.session.SessionObserver;
@@ -67,6 +70,12 @@ public class SessionPulsePlugin extends JavaPlugin {
     private YamlDataStorage storage;
 
     /**
+     * Which AFK detector is in force. The session tick holds it as its gate, and
+     * {@link #reload()} and EssentialsX coming or going re-resolve it in place.
+     */
+    private AfkService afk;
+
+    /**
      * The session tick, held by its handle rather than cancelled in bulk.
      *
      * <p>{@code /spulse reload} has to cancel and reschedule this one task individually.
@@ -98,7 +107,12 @@ public class SessionPulsePlugin extends JavaPlugin {
 
         // this::config, never the object. A captured snapshot would keep the tracker on the
         // previous file's window-reset-hours for ever after a reload.
-        this.tracker = new SessionTracker(this::config, SessionClock.system(), storage);
+        // One clock for both, so the idle timer and the counted window agree on what a
+        // second is.
+        SessionClock clock = SessionClock.system();
+        this.tracker = new SessionTracker(this::config, clock, storage);
+        this.afk = new AfkService(EssentialsLookup.of(getServer().getPluginManager()),
+                new BuiltInAfkDetector(clock, this::config), scheduler, getLogger(), this::config);
 
         // BEFORE registerEvents, and the order is load-bearing. Players are already online
         // whenever the plugin is enabled by a plugin manager rather than at boot; without
@@ -108,21 +122,26 @@ public class SessionPulsePlugin extends JavaPlugin {
         // harmless only because onJoin is idempotent, and not something to rely on.
         for (Player online : getServer().getOnlinePlayers()) {
             tracker.onJoin(online.getUniqueId(), online.getName());
+            afk.builtIn().seed(online.getUniqueId());
         }
         getServer().getPluginManager()
                 .registerEvents(new PlayerConnectionListener(tracker, storage::flushAsync), this);
+        // Before the first resolve, so an EssentialsX disabled between the two is seen.
+        getServer().getPluginManager().registerEvents(new PlayerActivityListener(afk), this);
+        afk.resolve();
 
         // tracker::snapshotAll is the heartbeat: every periodic flush re-stamps last-seen
         // for everyone still online, so a crash cannot leave it hours stale.
         storage.startFlushing(tracker::snapshotAll);
 
-        // AfkGate.NEVER until the AFK issue supplies the real gate. Milestones and overtime
-        // share the first observer; enforcement adds its own. storage::flushAsync, so a
-        // claimed reminder reaches disk ahead of the periodic flush and a crash cannot refire it.
+        // The service is the gate, not the detector it holds, so a resolve reaches the tick
+        // without a reschedule. Milestones and overtime share the first observer; enforcement
+        // adds its own. storage::flushAsync, so a claimed reminder reaches disk ahead of the
+        // periodic flush and a crash cannot refire it.
         SessionObserver reminders =
                 new ReminderObserver(tracker, scheduler, notifier, storage::flushAsync);
         this.sessionTick = scheduler.globalRepeating(
-                new SessionTickTask(tracker, AfkGate.NEVER, List.of(reminders), getLogger()),
+                new SessionTickTask(tracker, afk, List.of(reminders), getLogger()),
                 SessionTickTask.DELAY_TICKS, SessionTickTask.PERIOD_TICKS);
 
         getLogger().info("SessionPulse enabled (scheduler: " + scheduler.platformName() + ").");
@@ -163,6 +182,10 @@ public class SessionPulsePlugin extends JavaPlugin {
         // Nulled after the tasks are stopped, not before: the handle is only meaningful
         // while the scheduler is alive, and the blanket cancel above has already stopped it.
         this.sessionTick = null;
+        if (afk != null) {
+            afk.retire();
+            afk = null;
+        }
 
         // After the tick has stopped, before the notifier closes. A server stopping does not
         // deliver a quit event for the players still online, and neither does a plugin
@@ -233,10 +256,16 @@ public class SessionPulsePlugin extends JavaPlugin {
      * task here would kill the session tick and the plugin would silently stop counting.
      * The reload issue re-schedules the flush and tick tasks by their own handles - the
      * flush through {@link DataStorage#rescheduleFlush()}.
+     *
+     * <p>Re-resolves AFK detection after the new file is published, so a changed
+     * {@code tracking.afk.mode} and a changed EssentialsX {@code auto-afk} take effect here.
      */
     public void reload() {
         reloadConfig();
         loadConfiguration();
+        if (afk != null) {
+            afk.resolve();
+        }
     }
 
     /**
