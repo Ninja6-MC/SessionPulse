@@ -13,6 +13,7 @@ import com.ninja6.sessionpulse.session.SessionTickTask;
 import com.ninja6.sessionpulse.session.SessionTracker;
 import com.ninja6.sessionpulse.storage.DataStorage;
 import com.ninja6.sessionpulse.storage.YamlDataStorage;
+import org.bukkit.Sound;
 import org.bukkit.entity.Player;
 import org.bukkit.event.HandlerList;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -125,14 +126,16 @@ public class SessionPulsePlugin extends JavaPlugin {
         // Not decoration. Nothing joins a CI server, so without these two statements the boot
         // legs would prove the jar enables and nothing about whether the relocated Adventure
         // pipeline links. The console call renders a chat line (configured prefix included), an
-        // action bar and a title through the same methods a player gets; the console discards
-        // the last two, and linking them is the point. The logged legacy render is the only
-        // proof anywhere that the relocated legacy serializer resolves, which enforcement
-        // depends on. A broken service file surfaces here as ServiceConfigurationError. The
-        // boot script greps for all of it.
+        // action bar, a title and a sound through the same methods a player gets; the console
+        // discards the last three, and linking them is the point. The sound runs
+        // Sound#getKey(), compiled against the 1.20.4 enum, on 1.21.x where Sound is an
+        // interface; a mismatch surfaces as IncompatibleClassChangeError. The logged legacy
+        // render is the only proof anywhere that the relocated legacy serializer resolves,
+        // which enforcement depends on. A broken service file surfaces here as
+        // ServiceConfigurationError. The boot script greps for all of it.
         notifier.console("<gray>MiniMessage pipeline <green>ready</green>.</gray>",
                 "<gray>action bar ready</gray>", "<gray>title ready</gray>",
-                "<gray>subtitle ready</gray>");
+                "<gray>subtitle ready</gray>", Sound.BLOCK_NOTE_BLOCK_CHIME);
         getLogger().info(notifier.legacy(
                 "<color:#ff8800>Legacy serializer</color> <green>ready</green>.", Placeholders.none()));
     }

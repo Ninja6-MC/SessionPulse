@@ -63,6 +63,13 @@ class ChatPrefixTest {
     }
 
     @Test
+    @DisplayName("no configuration, as during disable, means no prefix rather than a crash")
+    void aMissingConfigurationMeansNoPrefix() {
+        Notifier notifier = new Notifier(null, () -> null);
+        assertEquals("§chi", legacy(notifier.renderChat("<red>hi</red>", Placeholders.none())));
+    }
+
+    @Test
     @DisplayName("placeholders work in the prefix")
     void placeholdersWorkInThePrefix() {
         Notifier notifier = NotifyFixture.notifier("reminders:\n  prefix: \"<gray><player></gray> \"\n");

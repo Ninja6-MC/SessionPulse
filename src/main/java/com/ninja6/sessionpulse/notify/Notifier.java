@@ -263,17 +263,21 @@ public final class Notifier {
     /**
      * Boot linkage probe; not a reminder channel.
      *
-     * <p>Sends a chat line, an action bar and a title to the console through exactly the
-     * render methods a player gets. The console discards the last two; linking them is the
-     * point, so an Adventure API / platform mismatch fails a boot leg instead of the first
-     * milestone on a live server. Does nothing while closed, and skips each {@code null}.
+     * <p>Sends a chat line, an action bar, a title and a sound to the console through exactly
+     * the render methods a player gets. The console discards the last three; linking them is
+     * the point, so an Adventure API / platform mismatch fails a boot leg instead of the
+     * first milestone on a live server. The sound matters most: {@link #renderSound} calls
+     * {@code Sound#getKey()}, compiled against the 1.20.4 enum, and on 1.21.x {@link Sound}
+     * is an interface. Does nothing while closed, and skips each {@code null}.
      *
      * @param message   chat line, prefixed as a player's would be
      * @param actionBar action-bar text
      * @param title     title text
      * @param subtitle  subtitle text
+     * @param sound     a sound, mapped by its key as a milestone's is
      */
-    public void console(String message, String actionBar, String title, String subtitle) {
+    public void console(String message, String actionBar, String title, String subtitle,
+                        Sound sound) {
         Audience console = injectedAudiences != null ? null : consoleAudience();
         if (console == null) {
             return;
@@ -287,6 +291,9 @@ public final class Notifier {
         }
         if (title != null || subtitle != null) {
             deliverTitle(console, title, subtitle, none);
+        }
+        if (sound != null) {
+            deliverSound(console, sound);
         }
     }
 
@@ -303,9 +310,14 @@ public final class Notifier {
      * sibling form is what keeps a prefix's style out of the body if that validation ever
      * loosens. The prefix is read from the configuration on this call and gets the same
      * placeholders as the body.
+     *
+     * <p>No configuration means no prefix. The plugin nulls its configuration during disable,
+     * and on Folia a region task that fetched its audience before {@link #close()} can still
+     * reach this line afterwards.
      */
     Component renderChat(String miniMessage, Placeholders placeholders) {
-        String prefix = config.get().reminderPrefix();
+        PluginConfig current = config.get();
+        String prefix = current == null ? "" : current.reminderPrefix();
         return Component.empty()
                 .append(renderLine(prefix, placeholders))
                 .append(renderLine(miniMessage, placeholders));

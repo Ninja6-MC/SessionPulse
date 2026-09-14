@@ -3,6 +3,7 @@ package com.ninja6.sessionpulse.notify;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * The values a configured message may refer to by tag: {@code <player>}, {@code <hours>},
@@ -88,7 +89,9 @@ public final class Placeholders {
         return values;
     }
 
+    /** Rejects {@code null} here, where the caller is, rather than at send time on a region thread. */
     private Placeholders with(String key, String value) {
+        Objects.requireNonNull(value, key);
         Map<String, String> copy = new LinkedHashMap<>(values);
         copy.put(key, value);
         return new Placeholders(Collections.unmodifiableMap(copy));

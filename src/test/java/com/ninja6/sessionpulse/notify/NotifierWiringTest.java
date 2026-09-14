@@ -63,6 +63,8 @@ class NotifierWiringTest {
         String enable = method(code(), "onEnable");
         assertTrue(enable.contains("notifier.console("),
                 "the console probe is gone; the boot legs no longer prove the pipeline links");
+        assertTrue(Pattern.compile("notifier\\.console\\([^;]*,\\s*Sound\\.[A-Z_]+\\)").matcher(enable).find(),
+                "the console probe sends no sound; Sound#getKey() is never linked on a boot leg");
         assertTrue(enable.contains(".legacy("),
                 "the legacy probe is gone; nothing proves the relocated legacy serializer resolves");
     }

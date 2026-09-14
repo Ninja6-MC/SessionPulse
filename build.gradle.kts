@@ -138,7 +138,7 @@ tasks {
         // the configuration below is live. Gradle 9 is here and Test.failOnNoDiscoveredTests
         // does default to true - read back off the live task on 9.7.1, not assumed - so a
         // test source set that compiles but discovers nothing now fails instead of passing
-        // silently. It is satisfied: 293 tests are discovered and run. Read the counts, not
+        // silently. It is satisfied: 295 tests are discovered and run. Read the counts, not
         // the exit code, whenever the JUnit platform or its engine moves.
         //
         // A skipped test must fail the build, because in this project skipping is not

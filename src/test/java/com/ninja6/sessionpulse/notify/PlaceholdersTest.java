@@ -2,6 +2,7 @@ package com.ninja6.sessionpulse.notify;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.Locale;
@@ -99,6 +100,14 @@ class PlaceholdersTest {
 
         assertEquals("A", render("<player>", a));
         assertEquals("<player>", render("<player>", Placeholders.none()));
+    }
+
+    @Test
+    @DisplayName("a null value is rejected when it is set, naming the placeholder")
+    void aNullValueIsRejectedWhenSet() {
+        NullPointerException thrown = assertThrows(NullPointerException.class,
+                () -> Placeholders.none().player(null));
+        assertEquals("player", thrown.getMessage());
     }
 
     @Test

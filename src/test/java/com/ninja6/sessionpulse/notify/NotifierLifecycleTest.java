@@ -49,14 +49,17 @@ class NotifierLifecycleTest {
     }
 
     @Test
-    @DisplayName("a closed notifier delivers nothing and touches no player")
-    void aClosedNotifierDeliversNothingAndTouchesNoPlayer() {
+    @DisplayName("a never-opened notifier delivers nothing, touches no player, and closes safely twice")
+    void aNeverOpenedNotifierDeliversNothingAndClosesSafely() {
+        // Never opened, because opening needs a server. This checks close() before open(),
+        // and twice, is safe - what onDisable after a failed enable does - not that close()
+        // releases an open provider.
         Notifier notifier = NotifyFixture.notifier("");
         assertDoesNotThrow(() -> deliverEverything(notifier), "never opened");
 
-        notifier.close();
-        notifier.close();
-        assertDoesNotThrow(() -> deliverEverything(notifier), "closed twice");
+        assertDoesNotThrow(notifier::close, "close before open");
+        assertDoesNotThrow(notifier::close, "close twice");
+        assertDoesNotThrow(() -> deliverEverything(notifier), "never opened, closed twice");
     }
 
     private static void deliverEverything(Notifier notifier) {
@@ -66,6 +69,7 @@ class NotifierLifecycleTest {
         notifier.title(UNTOUCHABLE, "<red>hi</red>", "<red>hi</red>", none);
         notifier.sound(UNTOUCHABLE, Sound.BLOCK_NOTE_BLOCK_CHIME);
         notifier.milestone(UNTOUCHABLE, EVERYTHING, none);
-        notifier.console("<red>hi</red>", "<red>hi</red>", "<red>hi</red>", "<red>hi</red>");
+        notifier.console("<red>hi</red>", "<red>hi</red>", "<red>hi</red>", "<red>hi</red>",
+                Sound.BLOCK_NOTE_BLOCK_CHIME);
     }
 }
