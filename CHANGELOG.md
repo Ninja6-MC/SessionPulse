@@ -65,7 +65,7 @@ adheres to [Semantic Versioning](https://semver.org/).
   and a player holding `sessionpulse.exempt` never receives one.
 - The overtime reminder, when enabled, repeats at `after-minutes` and every
   `every-minutes` after that, read against the counted window, so time spent AFK brings
-  none forward and a rejoin, restart or reload never replays one. Admin guide: on a shared
-  minute the milestone is sent first, on all of its channels including title and action
-  bar, and the overtime chat line after it; enabling or lowering overtime mid-session
-  starts at the next point on the series.
+  none forward and a rejoin, restart or reload never replays one. On a shared minute the
+  milestone is sent first, on all of its channels including title and action bar, and the
+  overtime chat line after it. Enabling or lowering overtime mid-session starts at the next
+  point on the series.

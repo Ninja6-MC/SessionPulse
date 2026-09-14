@@ -2,7 +2,7 @@ package com.ninja6.sessionpulse;
 
 import com.ninja6.sessionpulse.config.PluginConfig;
 import com.ninja6.sessionpulse.listeners.PlayerConnectionListener;
-import com.ninja6.sessionpulse.milestone.ReminderObserver;
+import com.ninja6.sessionpulse.reminder.ReminderObserver;
 import com.ninja6.sessionpulse.notify.Notifier;
 import com.ninja6.sessionpulse.notify.Placeholders;
 import com.ninja6.sessionpulse.platform.FoliaLibScheduler;

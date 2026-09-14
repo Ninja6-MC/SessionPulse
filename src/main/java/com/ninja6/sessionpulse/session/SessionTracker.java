@@ -302,7 +302,9 @@ public final class SessionTracker {
      * tick is still claimed on the next one.
      *
      * <p>A session no longer in the map - replaced by a window reset, or removed by a quit -
-     * claims nothing. A tick can still hold one, and its fired set is read by nobody.
+     * claims nothing. A tick can still hold one, and its fired set is read by nobody. The map
+     * is checked again after the claim, so a reset landing while the walk ran sends nothing
+     * from the object it replaced.
      *
      * <p>The walk stops at the first milestone not yet reached, which relies on
      * {@link PluginConfig#milestones()} being sorted by minute.
@@ -311,12 +313,26 @@ public final class SessionTracker {
      * @return the milestones to deliver now; empty, and shared, in the common case
      */
     public List<Milestone> claimDue(PlayerSession session) {
+        // Read once. Two reads could straddle a minute and claim against two windows.
+        return claimDue(session, session.windowMinutes());
+    }
+
+    /**
+     * {@link #claimDue(PlayerSession)} against a window the caller has already read.
+     *
+     * <p>For a tick that claims more than one kind of alert: one reading shared by every
+     * claim, so a minute boundary cannot fall between them and claim one kind a tick ahead
+     * of the other.
+     *
+     * @param session       the player's live session, with this tick already credited
+     * @param windowMinutes {@code session.windowMinutes()}, read once by the caller
+     * @return the milestones to deliver now; empty, and shared, in the common case
+     */
+    public List<Milestone> claimDue(PlayerSession session, long windowMinutes) {
         PluginConfig current = config.get();
         if (current == null || !isLive(session)) {
             return List.of();
         }
-        // Read once. Two reads could straddle a minute and claim against two windows.
-        long windowMinutes = session.windowMinutes();
         List<Milestone> due = null;
         for (Milestone milestone : current.milestones()) {
             if (!reached(milestone.minute(), windowMinutes)) {
@@ -329,7 +345,7 @@ public final class SessionTracker {
                 due.add(milestone);
             }
         }
-        return due == null ? List.of() : due;
+        return due == null || !isLive(session) ? List.of() : due;
     }
 
     /**
@@ -348,18 +364,33 @@ public final class SessionTracker {
      * between the last flush and a crash was never claimed, and the stored window is short
      * of it, so it is sent after the rejoin.
      *
+     * <p>As with {@link #claimDue}, the map is checked again after a winning claim, so a
+     * reset landing in between sends nothing from the object it replaced.
+     *
      * @param session the player's live session, with this tick already credited
      * @return the reminder to deliver now, or {@code null} if none is due, overtime is
      *         disabled, there is no configuration, or the session is detached
      */
     public OvertimeClaim claimOvertime(PlayerSession session) {
+        return claimOvertime(session, session.windowMinutes());
+    }
+
+    /**
+     * {@link #claimOvertime(PlayerSession)} against a window the caller has already read.
+     *
+     * @param session       the player's live session, with this tick already credited
+     * @param windowMinutes {@code session.windowMinutes()}, read once by the caller
+     * @return the reminder to deliver now, or {@code null}
+     */
+    public OvertimeClaim claimOvertime(PlayerSession session, long windowMinutes) {
         PluginConfig current = config.get();
         if (current == null || !current.overtime().enabled() || !isLive(session)) {
             return null;
         }
         OvertimePolicy policy = current.overtime();
-        long due = dueOvertimeMinute(policy, session.windowMinutes());
-        if (due == PlayerSession.NO_OVERTIME || !session.claimOvertime(due)) {
+        long due = dueOvertimeMinute(policy, windowMinutes);
+        if (due == PlayerSession.NO_OVERTIME || !session.claimOvertime(due)
+                || !isLive(session)) {
             return null;
         }
         return new OvertimeClaim(due, policy.message());
@@ -370,9 +401,9 @@ public final class SessionTracker {
      *
      * <p>For a milestone or overtime claim. Neither the fired set nor the overtime minute is
      * persisted; what suppresses them after a restart is the stored window having reached
-     * the minute. The periodic flush can
-     * be a whole interval behind, so without this a crash just after an alert would store a
-     * window short of it and the alert would fire again on rejoin.
+     * the minute. The periodic flush can be a whole interval behind, so without this a crash
+     * just after an alert would store a window short of it and the alert would fire again on
+     * rejoin.
      *
      * <p>Does nothing for a session no longer in the map. A quit has already stored the
      * final figure, and a detached session's older one must not overwrite it.

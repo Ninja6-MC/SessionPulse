@@ -108,15 +108,17 @@ reminders:
     # still online.
     enabled: false
     # Counted-window minutes before the first overtime reminder. Clamped to
-    # 1-10080. If it lands on a milestone minute, the milestone is sent first.
+    # 1-10080. Whenever a reminder lands on a milestone minute, the milestone is
+    # sent first and the reminder after it.
     after-minutes: 180
     # Minutes between reminders after that. Clamped to 1-1440. The floor of 1 is
     # not cosmetic: a 0 would schedule a reminder every tick. Above 1440 (a day)
     # the recurring reminder recurs less often than most sessions last.
     every-minutes: 30
     # <hours> is filled in by the plugin with the counted hours, to one decimal
-    # place. The tag check described at the top of this file does not know it
-    # and leaves it alone, which is why it can be written plainly here.
+    # place, and <minutes> with the counted minutes. The tag check described at
+    # the top of this file does not know either and leaves them alone, which is
+    # why they can be written plainly here.
     message: "<red>You have been playing for <white><hours></white> hours.</red>"
 
 # The optional layer that ends a session rather than commenting on it.

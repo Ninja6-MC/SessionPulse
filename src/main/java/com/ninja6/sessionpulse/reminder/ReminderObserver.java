@@ -1,4 +1,4 @@
-package com.ninja6.sessionpulse.milestone;
+package com.ninja6.sessionpulse.reminder;
 
 import com.ninja6.sessionpulse.config.Milestone;
 import com.ninja6.sessionpulse.notify.Notifier;
@@ -78,8 +78,11 @@ public final class ReminderObserver implements SessionObserver {
 
     @Override
     public void afterAccrual(Player player, PlayerSession session) {
-        List<Milestone> due = tracker.claimDue(session);
-        OvertimeClaim overtime = tracker.claimOvertime(session);
+        // Read once for both claims, so a minute boundary cannot fall between them and claim
+        // the reminder a tick ahead of the milestone it must follow.
+        long windowMinutes = session.windowMinutes();
+        List<Milestone> due = tracker.claimDue(session, windowMinutes);
+        OvertimeClaim overtime = tracker.claimOvertime(session, windowMinutes);
         if (due.isEmpty() && overtime == null) {
             return;
         }

@@ -1,4 +1,4 @@
-package com.ninja6.sessionpulse.milestone;
+package com.ninja6.sessionpulse.reminder;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -293,6 +293,8 @@ class ReminderObserverTest {
         tick(Duration.ofMinutes(180));
 
         assertEquals(1, scheduler.entityTargets.size(), "two tasks would leave the order to Folia");
+        assertEquals(List.of("flush with window 10800"), flushOrder,
+                "one checkpoint and one flush for the tick, not one per kind of claim");
         assertEquals(List.of(
                 "chat:§athree hours", "actionBar:§bbar", "title:§6top/§6bottom",
                 "sound:minecraft:block.note_block.chime", "chat:§cover 180 3.0 Ada"),
@@ -314,10 +316,11 @@ class ReminderObserverTest {
         tick(Duration.ofMinutes(7));
 
         assertEquals(2, scheduler.entityTargets.size(), "one task at 180, one at 210");
+        config = parse(OVERTIME_CONFIG.replace("<red>over", "<red>reloaded"));
         assertEquals(1, scheduler.runEntity());
         assertEquals(List.of("chat:§cover 210 3.5 Ada"),
                 audience.calls().subList(before, audience.calls().size()),
-                "read at delivery, the window would say 217");
+                "read at delivery, the window would say 217 and the text would be the reloaded file's");
     }
 
     @Test
