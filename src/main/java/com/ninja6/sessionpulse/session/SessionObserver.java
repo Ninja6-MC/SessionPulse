@@ -11,8 +11,9 @@ import org.bukkit.entity.Player;
  * player - send a message, play a sound, disconnect them - is handed to
  * {@code Scheduler#entity} for the region that owns them.
  *
- * <p>The milestone observer is registered today; overtime and enforcement register theirs
- * alongside it.
+ * <p>The reminder observer is registered today, and carries both milestones and overtime so
+ * that the two are ordered inside one entity task; enforcement registers its own alongside
+ * it.
  */
 @FunctionalInterface
 public interface SessionObserver {

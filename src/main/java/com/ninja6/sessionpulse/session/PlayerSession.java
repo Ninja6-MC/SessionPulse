@@ -54,6 +54,13 @@ import java.util.concurrent.atomic.AtomicLong;
  *       thread ran them, which on Folia is a region thread rather than the main one. Seeding
  *       racing a claim can only turn the claim into a no-op, never repeat it, because
  *       {@link #markFired(int)} has exactly one winner.</li>
+ *   <li>{@code overtimeFiredMinute} - an {@link AtomicLong} that only ever rises. Written by
+ *       the tick when an overtime reminder is claimed, and seeded at join and at reload from
+ *       the same threads as {@code firedMinutes}. It holds a counted-window minute rather
+ *       than a reminder's position in the series, because a position means nothing once a
+ *       reload changes {@code after-minutes} or {@code every-minutes}, and a minute compares
+ *       the same under any configuration. {@link #claimOvertime(long)} has exactly one
+ *       winner, and a seed racing it can only raise the bar, never lower it.</li>
  * </ul>
  */
 public final class PlayerSession {
@@ -65,6 +72,13 @@ public final class PlayerSession {
      * for every online player and boxing it would allocate for nothing.
      */
     public static final long NOT_AFK = Long.MIN_VALUE;
+
+    /**
+     * No overtime minute: nothing is due yet, or nothing has been claimed in this window.
+     *
+     * <p>Below every real minute, so any due minute compares greater than it.
+     */
+    public static final long NO_OVERTIME = -1L;
 
     private static final long NANOS_PER_SECOND = 1_000_000_000L;
 
@@ -79,6 +93,7 @@ public final class PlayerSession {
     private final AtomicLong accruedNanos = new AtomicLong();
     private final AtomicLong lastAccrualNanos;
     private final Set<Integer> firedMinutes = ConcurrentHashMap.newKeySet();
+    private final AtomicLong overtimeFiredMinute = new AtomicLong(NO_OVERTIME);
 
     private volatile long afkSinceNanos = NOT_AFK;
 
@@ -261,6 +276,46 @@ public final class PlayerSession {
      */
     public Set<Integer> firedMinutes() {
         return Collections.unmodifiableSet(firedMinutes);
+    }
+
+    /**
+     * The latest overtime minute claimed or seeded in this window.
+     *
+     * @return the minute, or {@link #NO_OVERTIME} if there is none
+     */
+    public long overtimeFiredMinute() {
+        return overtimeFiredMinute.get();
+    }
+
+    /**
+     * Records an overtime reminder as claimed, if it is later than every one before it.
+     *
+     * @param minute the counted-window minute the reminder fell due at
+     * @return {@code true} only for the call that raised the recorded minute to
+     *         {@code minute}. Callers send only on {@code true}, so two overlapping ticks
+     *         can never both send the same reminder
+     */
+    public boolean claimOvertime(long minute) {
+        long current;
+        do {
+            current = overtimeFiredMinute.get();
+            if (minute <= current) {
+                return false;
+            }
+        } while (!overtimeFiredMinute.compareAndSet(current, minute));
+        return true;
+    }
+
+    /**
+     * Marks every overtime reminder up to and including {@code minute} as already sent.
+     *
+     * <p>Used at join and at reload, for the same reason as {@link #seedFired}. Never lowers
+     * what is recorded.
+     *
+     * @param minute the latest minute to suppress, or {@link #NO_OVERTIME} to suppress none
+     */
+    public void seedOvertime(long minute) {
+        overtimeFiredMinute.accumulateAndGet(minute, Math::max);
     }
 
     /**

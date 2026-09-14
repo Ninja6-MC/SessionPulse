@@ -63,3 +63,9 @@ adheres to [Semantic Versioning](https://semver.org/).
 - Configured milestones fire once per counted window, through `Notifier` on the player's
   own region. A reload, a rejoin or a restart in the same window does not fire them again,
   and a player holding `sessionpulse.exempt` never receives one.
+- The overtime reminder, when enabled, repeats at `after-minutes` and every
+  `every-minutes` after that, read against the counted window, so time spent AFK brings
+  none forward and a rejoin, restart or reload never replays one. On a shared minute the
+  milestone is sent first, on all of its channels including title and action bar, and the
+  overtime chat line after it. Enabling or lowering overtime mid-session starts at the next
+  point on the series.
