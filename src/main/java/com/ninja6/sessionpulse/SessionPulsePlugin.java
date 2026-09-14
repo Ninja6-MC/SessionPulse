@@ -2,6 +2,7 @@ package com.ninja6.sessionpulse;
 
 import com.ninja6.sessionpulse.config.PluginConfig;
 import com.ninja6.sessionpulse.listeners.PlayerConnectionListener;
+import com.ninja6.sessionpulse.milestone.MilestoneObserver;
 import com.ninja6.sessionpulse.notify.Notifier;
 import com.ninja6.sessionpulse.notify.Placeholders;
 import com.ninja6.sessionpulse.platform.FoliaLibScheduler;
@@ -9,6 +10,7 @@ import com.ninja6.sessionpulse.platform.Scheduler;
 import com.ninja6.sessionpulse.session.AfkGate;
 import com.ninja6.sessionpulse.session.SessionClock;
 import com.ninja6.sessionpulse.session.PlayerSession;
+import com.ninja6.sessionpulse.session.SessionObserver;
 import com.ninja6.sessionpulse.session.SessionTickTask;
 import com.ninja6.sessionpulse.session.SessionTracker;
 import com.ninja6.sessionpulse.storage.DataStorage;
@@ -114,11 +116,13 @@ public class SessionPulsePlugin extends JavaPlugin {
         // for everyone still online, so a crash cannot leave it hours stale.
         storage.startFlushing(tracker::snapshotAll);
 
-        // AfkGate.NEVER and no observers: this issue counts time and puts nothing on
-        // anybody's screen. The AFK issue supplies the real gate; the reminder issues
-        // register the observers.
+        // AfkGate.NEVER until the AFK issue supplies the real gate. Milestones are the first
+        // observer; overtime and enforcement add theirs. storage::flushAsync, so a claimed
+        // milestone reaches disk ahead of the periodic flush and a crash cannot refire it.
+        SessionObserver milestones =
+                new MilestoneObserver(tracker, scheduler, notifier, storage::flushAsync);
         this.sessionTick = scheduler.globalRepeating(
-                new SessionTickTask(tracker, AfkGate.NEVER, List.of(), getLogger()),
+                new SessionTickTask(tracker, AfkGate.NEVER, List.of(milestones), getLogger()),
                 SessionTickTask.DELAY_TICKS, SessionTickTask.PERIOD_TICKS);
 
         getLogger().info("SessionPulse enabled (scheduler: " + scheduler.platformName() + ").");
@@ -192,23 +196,38 @@ public class SessionPulsePlugin extends JavaPlugin {
      * {@code this::config} picks the new one up on its next call; anything that captured
      * the object would keep running the previous file's settings for ever, which is the
      * failure {@code SpawnProtector} in SpiralGenesis exists to prevent.
+     *
+     * <p>Once the tracker exists, publication goes through
+     * {@link SessionTracker#applyReload}, which seeds every live session's fired milestones
+     * against the new file on both sides of the swap. Assigning the field directly would let
+     * a tick between the swap and the seed fire a lowered milestone at everybody past it.
      */
     private void loadConfiguration() {
-        this.config = new PluginConfig(getConfig());
+        PluginConfig next = new PluginConfig(getConfig());
+        if (tracker == null) {
+            this.config = next;
+        } else {
+            tracker.applyReload(next, published -> this.config = published);
+        }
         // Every load, including a reload: a value the plugin corrected is one the operator
         // reads back out of their own file and believes, so it has to be said each time.
-        for (String warning : config.warnings()) {
+        for (String warning : next.warnings()) {
             getLogger().warning(warning);
         }
-        getLogger().info("Configuration loaded: " + config.milestones().size()
+        getLogger().info("Configuration loaded: " + next.milestones().size()
                 + " milestone(s), overtime "
-                + (config.overtime().enabled() ? "on" : "off")
+                + (next.overtime().enabled() ? "on" : "off")
                 + ", enforcement "
-                + (config.enforcement().enabled() ? "on" : "off") + ".");
+                + (next.enforcement().enabled() ? "on" : "off") + ".");
     }
 
     /**
      * Re-reads config.yml. Called by {@code /spulse reload} once the command issue lands.
+     *
+     * <p><strong>The only way to reload the configuration.</strong> Callers do not publish a
+     * configuration or seed milestones themselves: this method orders milestone seeding
+     * around publication, through {@link SessionTracker#applyReload}, and any other route
+     * can fire a lowered milestone at every player already past it.
      *
      * <p>Does NOT call {@code Scheduler#cancelAll}. That is disable-only: cancelling every
      * task here would kill the session tick and the plugin would silently stop counting.

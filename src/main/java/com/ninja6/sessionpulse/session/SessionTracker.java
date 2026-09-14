@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 /**
@@ -87,18 +88,24 @@ public final class SessionTracker {
      * <p>A backwards system clock produces a negative gap and therefore never grants a
      * fresh window. Accepted, and the safe direction to fail in.
      *
+     * <p>Fired milestones are seeded twice: inside the map's compute, against the
+     * configuration read there, and again once the session is visible, against a fresh read.
+     * A reload that runs entirely while the compute is still building the session cannot see
+     * it, and would otherwise leave it seeded against the file that reload replaced.
+     *
      * @param uuid the player
      * @param name their name
      * @return their live session, new or existing, never {@code null}
      */
     public PlayerSession onJoin(UUID uuid, String name) {
-        return sessions.computeIfAbsent(uuid, key -> {
+        PlayerSession joined = sessions.computeIfAbsent(uuid, key -> {
             long wallNow = clock.wallMillis();
             long nanoNow = clock.nanoTime();
+            PluginConfig current = config.get();
             SessionSnapshot stored = store.load(key);
 
             long gapMillis = wallNow - stored.lastSeenMillis();
-            long thresholdMillis = (long) config.get().windowResetHours() * MILLIS_PER_HOUR;
+            long thresholdMillis = (long) current.windowResetHours() * MILLIS_PER_HOUR;
             boolean reset = stored.isUnknown() || gapMillis > thresholdMillis;
 
             PlayerSession session = new PlayerSession(
@@ -112,10 +119,16 @@ public final class SessionTracker {
                     stored.lifetimeSeconds());
 
             if (!reset) {
-                session.seedFired(passedMilestones(session.windowMinutes()));
+                session.seedFired(passedMilestones(current, session.windowMinutes()));
             }
             return session;
         });
+        // Additive and idempotent, so harmless for a player who was already tracked.
+        PluginConfig afterJoin = config.get();
+        if (afterJoin != null) {
+            joined.seedFired(passedMilestones(afterJoin, joined.windowMinutes()));
+        }
+        return joined;
     }
 
     /**
@@ -270,32 +283,129 @@ public final class SessionTracker {
     }
 
     /**
-     * Re-seeds every live session's fired-milestone set against the configuration in force.
+     * Claims every milestone the counted window has reached and not yet fired, in ascending
+     * minute order.
      *
-     * <p>For {@code /spulse reload}: an operator who adds a milestone at minute 30 while
-     * somebody has been playing for two hours should not have it fire at them immediately.
-     * Seeding is additive - a milestone already fired stays fired.
+     * <p>Claiming is the decision, and it happens here, on the session tick, where the window
+     * is measured. A milestone is returned only by the call whose {@link PlayerSession#markFired}
+     * won, so two overlapping ticks can never both return it. Delivery is somebody else's job
+     * and runs later on the player's own region; a claim whose delivery never runs stays
+     * claimed, which loses the alert rather than repeating it.
+     *
+     * <p>Reached means {@code minute <= windowMinutes}, the same comparison seeding uses, so
+     * a claim and a seed can never disagree about a boundary. A milestone missed by a lagging
+     * tick is still claimed on the next one.
+     *
+     * <p>A session no longer in the map - replaced by a window reset, or removed by a quit -
+     * claims nothing. A tick can still hold one, and its fired set is read by nobody.
+     *
+     * <p>The walk stops at the first milestone not yet reached, which relies on
+     * {@link PluginConfig#milestones()} being sorted by minute.
+     *
+     * @param session the player's live session, with this tick already credited
+     * @return the milestones to deliver now; empty, and shared, in the common case
      */
-    public void reseedFiredMilestones() {
-        for (PlayerSession session : sessions.values()) {
-            session.seedFired(passedMilestones(session.windowMinutes()));
+    public List<Milestone> claimDue(PlayerSession session) {
+        PluginConfig current = config.get();
+        if (current == null || !isLive(session)) {
+            return List.of();
         }
+        // Read once. Two reads could straddle a minute and claim against two windows.
+        long windowMinutes = session.windowMinutes();
+        List<Milestone> due = null;
+        for (Milestone milestone : current.milestones()) {
+            if (!reached(milestone.minute(), windowMinutes)) {
+                break;
+            }
+            if (session.markFired(milestone.minute())) {
+                if (due == null) {
+                    due = new ArrayList<>(2);
+                }
+                due.add(milestone);
+            }
+        }
+        return due == null ? List.of() : due;
     }
 
     /**
-     * The minutes of every milestone the given counted window has already gone past.
+     * Stores one player's counted state now, rather than at the next periodic flush.
      *
-     * <p>Read from the supplier on every call, so a reload is reflected without anything
-     * here holding a configuration object.
+     * <p>For a milestone claim. The fired set is not persisted; what suppresses a milestone
+     * after a restart is the stored window having reached its minute. The periodic flush can
+     * be a whole interval behind, so without this a crash just after an alert would store a
+     * window short of it and the alert would fire again on rejoin.
+     *
+     * <p>Does nothing for a session no longer in the map. A quit has already stored the
+     * final figure, and a detached session's older one must not overwrite it.
+     *
+     * @param session the player's live session
      */
-    private List<Integer> passedMilestones(long windowMinutes) {
+    public void checkpoint(PlayerSession session) {
+        if (isLive(session)) {
+            store.save(session.uuid(), snapshotOf(session, clock.wallMillis()));
+        }
+    }
+
+    /** Whether {@code session} is the object the map holds for its player, not a stale one. */
+    private boolean isLive(PlayerSession session) {
+        return sessions.get(session.uuid()) == session;
+    }
+
+    /**
+     * Publishes a new configuration without letting it fire anything the windows already
+     * passed.
+     *
+     * <p>For {@code /spulse reload}: an operator who adds a milestone at minute 30 while
+     * somebody has been playing for two hours should not have it fire at them immediately.
+     * The order is seed, publish, seed again, and each step is load-bearing:
+     *
+     * <ul>
+     *   <li>Seeding against {@code next} <em>before</em> it is published closes the race with
+     *       the tick. On Folia a player's {@code /spulse reload} runs on their region thread
+     *       and the tick on the global one, so a tick landing between publish and seed would
+     *       claim the new milestone for everyone already past it.</li>
+     *   <li>Seeding again <em>after</em> it is published covers a player whose join became
+     *       visible between the two passes, seeded against the previous configuration. A join
+     *       still being built when this returns is seeded by {@link #onJoin} itself.</li>
+     * </ul>
+     *
+     * <p>Seeding is additive and idempotent: a milestone already fired stays fired, and the
+     * second pass only adds what the first could not see. A milestone the new file removes
+     * can still be claimed from the old configuration by a tick running between the first
+     * seed and the publish, for a player crossing it at that instant. Accepted.
+     *
+     * @param next    the configuration about to be in force
+     * @param publish makes {@code next} the configuration the supplier returns
+     */
+    public void applyReload(PluginConfig next, Consumer<PluginConfig> publish) {
+        seedAll(next);
+        publish.accept(next);
+        seedAll(next);
+    }
+
+    private void seedAll(PluginConfig source) {
+        for (PlayerSession session : sessions.values()) {
+            session.seedFired(passedMilestones(source, session.windowMinutes()));
+        }
+    }
+
+    /** The minutes of every milestone in {@code source} the given counted window has passed. */
+    private static List<Integer> passedMilestones(PluginConfig source, long windowMinutes) {
         List<Integer> passed = new ArrayList<>();
-        for (Milestone milestone : config.get().milestones()) {
-            if (milestone.minute() <= windowMinutes) {
+        for (Milestone milestone : source.milestones()) {
+            if (reached(milestone.minute(), windowMinutes)) {
                 passed.add(milestone.minute());
             }
         }
         return passed;
+    }
+
+    /**
+     * Whether a counted window of {@code windowMinutes} has reached a milestone. The one
+     * boundary claiming and seeding share: 59 minutes has not reached 60, and 60 has.
+     */
+    private static boolean reached(int minute, long windowMinutes) {
+        return minute <= windowMinutes;
     }
 
     /** The one shape a session takes when it crosses to storage. */

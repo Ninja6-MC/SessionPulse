@@ -368,23 +368,22 @@ class SessionTrackerTest {
     }
 
     @Test
-    @DisplayName("reseeding after a reload suppresses milestones the window already passed")
-    void reseedFiredMilestonesReadsTheConfigurationInForce() {
+    @DisplayName("a reload suppresses milestones the window already passed")
+    void aReloadSeedsAgainstTheNewConfiguration() {
         tracker.onJoin(uuid, "Ada");
         clock.advance(Duration.ofMinutes(90));
         tracker.accrue(uuid, false);
         assertTrue(tracker.session(uuid).firedMinutes().isEmpty(),
-                "nothing has fired: this issue registers no observer");
+                "accrual alone fires nothing; only a claim does, and none is made here");
 
-        config = TestConfigs.parse("""
+        tracker.applyReload(TestConfigs.parse("""
                 reminders:
                   milestones:
                     - minute: 30
                       message: "<green>thirty</green>"
                     - minute: 120
                       message: "<green>two hours</green>"
-                """);
-        tracker.reseedFiredMilestones();
+                """), published -> config = published);
 
         assertTrue(tracker.session(uuid).hasFired(30),
                 "a milestone added mid-session below the current window must not fire at once");
