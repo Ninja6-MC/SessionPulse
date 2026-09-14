@@ -2,6 +2,8 @@ package com.ninja6.sessionpulse;
 
 import com.ninja6.sessionpulse.config.PluginConfig;
 import com.ninja6.sessionpulse.listeners.PlayerConnectionListener;
+import com.ninja6.sessionpulse.notify.Notifier;
+import com.ninja6.sessionpulse.notify.Placeholders;
 import com.ninja6.sessionpulse.platform.FoliaLibScheduler;
 import com.ninja6.sessionpulse.platform.Scheduler;
 import com.ninja6.sessionpulse.session.AfkGate;
@@ -11,8 +13,7 @@ import com.ninja6.sessionpulse.session.SessionTickTask;
 import com.ninja6.sessionpulse.session.SessionTracker;
 import com.ninja6.sessionpulse.storage.DataStorage;
 import com.ninja6.sessionpulse.storage.YamlDataStorage;
-import net.kyori.adventure.platform.bukkit.BukkitAudiences;
-import net.kyori.adventure.text.minimessage.MiniMessage;
+import org.bukkit.Sound;
 import org.bukkit.entity.Player;
 import org.bukkit.event.HandlerList;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -25,8 +26,8 @@ import java.util.UUID;
  * Plugin lifecycle entrypoint for SessionPulse.
  *
  * <p>It owns the things that have to outlive a single call and be torn down in a defined
- * order: the scheduler seam, storage, and the audience provider that is the plugin's only
- * route to a player's screen. The command declared in {@code plugin.yml} still has no
+ * order: the scheduler seam, storage, and the notifier that is the plugin's only route to
+ * a player's screen. The command declared in {@code plugin.yml} still has no
  * executor, so {@code /spulse} prints its usage string until the command issue lands.
  */
 public class SessionPulsePlugin extends JavaPlugin {
@@ -39,7 +40,8 @@ public class SessionPulsePlugin extends JavaPlugin {
      */
     private FoliaLibScheduler scheduler;
 
-    private BukkitAudiences audiences;
+    /** Everything a player sees goes through this; see {@link Notifier}. */
+    private Notifier notifier;
 
     /**
      * The configuration in force.
@@ -80,14 +82,10 @@ public class SessionPulsePlugin extends JavaPlugin {
 
         this.scheduler = new FoliaLibScheduler(this);
 
-        // Created here, closed in onDisable, and it is the ONLY route to a player's screen
-        // anywhere in this plugin - Paper included. Our net.kyori is relocated into
-        // com.ninja6.sessionpulse.lib.kyori, so our Component is not the Component Paper
-        // ships natively. player.sendMessage(Component) would compile against our copy and
-        // fail at runtime against Paper's; we compile against spigot-api, where that
-        // overload does not exist, so the compiler is the first gate and this field is the
-        // second.
-        this.audiences = BukkitAudiences.create(this);
+        // The only route to a player's screen; see Notifier for why that is a rule, and why
+        // open() is here and not on first send. this::config, so a reload reaches the prefix.
+        this.notifier = new Notifier(this, this::config);
+        notifier.open();
 
         // Read before the tracker exists and before any player is seeded: a player seeded
         // against an empty store is handed a fresh window, and nothing corrects it later.
@@ -125,17 +123,21 @@ public class SessionPulsePlugin extends JavaPlugin {
 
         getLogger().info("SessionPulse enabled (scheduler: " + scheduler.platformName() + ").");
 
-        // Not decoration, and not the notifier issue arriving early. The boot legs assert
-        // that the relocated Adventure pipeline works, and until something actually
-        // deserializes and sends a Component, nothing on the ServiceLoader path ever runs -
-        // so a mergeServiceFiles() that silently stopped working would leave every boot leg
-        // green. This one line makes the round trip real: MiniMessage parses, a relocated
-        // Component is built, and a relocated serializer renders it to the console. A
-        // broken service file surfaces here as ServiceConfigurationError, which the boot
-        // script greps for.
-        audiences.console().sendMessage(
-            MiniMessage.miniMessage().deserialize(
-                "<gray>SessionPulse: MiniMessage pipeline <green>ready</green>.</gray>"));
+        // Not decoration. Nothing joins a CI server, so without these two statements the boot
+        // legs would prove the jar enables and nothing about whether the relocated Adventure
+        // pipeline links. The console call renders a chat line (configured prefix included), an
+        // action bar, a title and a sound through the same methods a player gets; the console
+        // discards the last three, and linking them is the point. The sound runs
+        // Sound#getKey(), compiled against the 1.20.4 enum, on 1.21.x where Sound is an
+        // interface; a mismatch surfaces as IncompatibleClassChangeError. The logged legacy
+        // render is the only proof anywhere that the relocated legacy serializer resolves,
+        // which enforcement depends on. A broken service file surfaces here as
+        // ServiceConfigurationError. The boot script greps for all of it.
+        notifier.console("<gray>MiniMessage pipeline <green>ready</green>.</gray>",
+                "<gray>action bar ready</gray>", "<gray>title ready</gray>",
+                "<gray>subtitle ready</gray>", Sound.BLOCK_NOTE_BLOCK_CHIME);
+        getLogger().info(notifier.legacy(
+                "<color:#ff8800>Legacy serializer</color> <green>ready</green>.", Placeholders.none()));
     }
 
     @Override
@@ -147,8 +149,8 @@ public class SessionPulsePlugin extends JavaPlugin {
         // get there. Bukkit would unregister them anyway, but only after this method returns.
         HandlerList.unregisterAll(this);
 
-        // Order matters. Tasks next: a tick still running while the audience closes would
-        // send into a closed provider and throw during shutdown, which the boot legs
+        // Order matters. Tasks next: a tick still running while the notifier closes would
+        // send into a closing provider and throw during shutdown, which the boot legs
         // would - correctly - read as a dirty disable.
         if (scheduler != null) {
             scheduler.cancelAll();
@@ -158,7 +160,7 @@ public class SessionPulsePlugin extends JavaPlugin {
         // while the scheduler is alive, and the blanket cancel above has already stopped it.
         this.sessionTick = null;
 
-        // After the tick has stopped, before the audience closes. A server stopping does not
+        // After the tick has stopped, before the notifier closes. A server stopping does not
         // deliver a quit event for the players still online, and neither does a plugin
         // manager disabling this plugin, so their sessions are finalised here or lost. Then
         // the one synchronous write: async work submitted during onDisable has no guarantee
@@ -175,9 +177,9 @@ public class SessionPulsePlugin extends JavaPlugin {
             storage = null;
         }
         this.tracker = null;
-        if (audiences != null) {
-            audiences.close();
-            audiences = null;
+        if (notifier != null) {
+            notifier.close();
+            notifier = null;
         }
         this.config = null;
         getLogger().info("SessionPulse disabled.");
@@ -232,12 +234,12 @@ public class SessionPulsePlugin extends JavaPlugin {
     }
 
     /**
-     * The single door to player output. See {@link #onEnable()}.
+     * The single door to player output.
      *
-     * @return the audience provider, or {@code null} once the plugin has been disabled
+     * @return the notifier, or {@code null} once the plugin has been disabled
      */
-    public BukkitAudiences audiences() {
-        return audiences;
+    public Notifier notifier() {
+        return notifier;
     }
 
     /**

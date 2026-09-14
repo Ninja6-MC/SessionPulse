@@ -56,9 +56,9 @@ public interface Scheduler {
      * Runs a task once on the region that owns {@code entity}.
      *
      * <p>On Folia a player's data may only be touched from that player's own region
-     * thread, so anything reading or writing a player - including sending them a message
-     * through an audience - goes through here. On Paper and Spigot this is the main thread
-     * and the call is equivalent to a one-tick task.
+     * thread, so anything reading or writing a player - including sending them anything
+     * through notify.Notifier - goes through here. On Paper and Spigot this is the main
+     * thread and the call is equivalent to a one-tick task.
      *
      * <p>Returns nothing, because there is nothing meaningful to cancel: the task runs
      * once, at the next opportunity.

@@ -71,6 +71,8 @@ git push -u origin feat/my-actual-change && git push origin --delete <old-name>
    * Target Java 21 LTS.
    * Follow standard Java naming conventions and clean code practices.
    * All scheduler tasks must be Folia-safe (use FoliaLib abstractions).
+   * All player-facing output goes through `notify/Notifier`; `player.sendMessage(Component)`
+     fails at runtime on Paper.
    * All HTTP or file I/O must be off the main server thread.
 4. **Testing**:
    Add JUnit 5 unit tests for any logic modifications:

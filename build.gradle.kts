@@ -42,13 +42,16 @@ repositories {
 // let a one-sided bump do exactly that.
 val spigotApi = "org.spigotmc:spigot-api:1.20.4-R0.1-SNAPSHOT"
 
-// The Adventure line, and the two literals must move together. adventure-platform-bukkit
-// 4.4.1 resolves adventure-api 4.21.0 - read off its published pom - so MiniMessage has to
-// be 4.21.0 and not the newest release. The current MiniMessage is 5.2.0, which resolves
-// adventure-api 5.2.0; Gradle would then hand BukkitAudiences an API it was not compiled
-// against and the first message send would throw NoSuchMethodError, with nothing at build
-// time to catch it. The BOM below is what makes that alignment a declaration rather than a
-// coincidence.
+// The Adventure line: two literals, and they need not be equal. adventure-platform's line
+// ends at 4.4.1, built against adventure-api 4.21.0 - read off its published pom - and the
+// BOM below raises every adventure-api module to the version on the first line. Adventure
+// keeps binary compatibility within 4.x, so that skew is permitted, and Dependabot's
+// major-only ignore allows it by design; that is how 4.26.1 arrived. A MAJOR is the danger:
+// adventure-api 5.x under BukkitAudiences 4.4.1 compiles and enables, and the first send
+// throws NoSuchMethodError, AbstractMethodError or IncompatibleClassChangeError, with
+// nothing at build time to catch it. The boot legs grep for all three, on the console path
+// only; nothing automated exercises the player facets. The BOM is what makes the alignment
+// a declaration rather than a coincidence.
 val adventureApi = "4.26.1"
 val adventurePlatform = "4.4.1"
 
@@ -81,10 +84,10 @@ dependencies {
 
     // Do NOT exclude adventure-text-serializer-legacy from the shade. It arrives
     // transitively through adventure-platform-bukkit, is relocated by the net.kyori rule
-    // along with everything else, and is what the two call sites Adventure cannot reach -
-    // AsyncPlayerPreLoginEvent#disallow and Player#kickPlayer, both String-only on
-    // spigot-api - will need when enforcement lands. A size-trimming pass that drops it
-    // would break that with no build-time signal.
+    // along with everything else, and is what Notifier#legacy renders with, for the two
+    // call sites Adventure cannot reach - AsyncPlayerPreLoginEvent#disallow and
+    // Player#kickPlayer, both String-only on spigot-api. A size-trimming pass that drops it
+    // fails the requireEntry below.
 
     // Unit testing.
     testImplementation(platform("org.junit:junit-bom:6.1.3"))
@@ -135,7 +138,7 @@ tasks {
         // the configuration below is live. Gradle 9 is here and Test.failOnNoDiscoveredTests
         // does default to true - read back off the live task on 9.7.1, not assumed - so a
         // test source set that compiles but discovers nothing now fails instead of passing
-        // silently. It is satisfied: 252 tests are discovered and run. Read the counts, not
+        // silently. It is satisfied: 295 tests are discovered and run. Read the counts, not
         // the exit code, whenever the JUnit platform or its engine moves.
         //
         // A skipped test must fail the build, because in this project skipping is not
@@ -261,10 +264,10 @@ tasks {
         //   net.kyori, alongside the copy Paper ships natively - which is the exact
         //   collision the relocation exists to prevent.
         //
-        //   The consequence is the constraint the notifier issue turns into a rule: our
-        //   Component is NOT Paper's Component, so player.sendMessage(Component) is a
-        //   runtime landmine on Paper. Every output call goes through BukkitAudiences, on
-        //   all four platforms.
+        //   The consequence is the constraint notify/Notifier enforces: our Component is
+        //   NOT Paper's Component, so player.sendMessage(Component) is a runtime landmine on
+        //   Paper. Every output call goes through Notifier, and Notifier through
+        //   BukkitAudiences, on all four platforms.
         //
         //   net.kyori.examination and net.kyori.option fall under this single rule; do not
         //   add rules for them. adventure-platform-bukkit 4.4.1 carries no dotted
@@ -318,6 +321,10 @@ tasks {
                 requireEntry("com/ninja6/sessionpulse/lib/kyori/adventure/text/Component.class")
                 requireEntry("com/ninja6/sessionpulse/lib/kyori/adventure/platform/bukkit/BukkitAudiences.class")
                 requireEntry("com/ninja6/sessionpulse/lib/kyori/adventure/text/minimessage/MiniMessage.class")
+                // Notifier#legacy's serializer. It is only ever a transitive dependency, so this
+                // is the one build-time signal that a trimming pass dropped it; the boot legs are
+                // the second.
+                requireEntry("com/ninja6/sessionpulse/lib/kyori/adventure/text/serializer/legacy/LegacyComponentSerializer.class")
 
                 // The service files are the half that fails silently at runtime, so they are
                 // checked by name AND by content.

@@ -114,9 +114,9 @@ reminders:
     # not cosmetic: a 0 would schedule a reminder every tick. Above 1440 (a day)
     # the recurring reminder recurs less often than most sessions last.
     every-minutes: 30
-    # <hours> is replaced with the counted hours, to one decimal place. It is
-    # not a MiniMessage tag and MiniMessage leaves it alone, which is why it can
-    # be written plainly here.
+    # <hours> is filled in by the plugin with the counted hours, to one decimal
+    # place. The tag check described at the top of this file does not know it
+    # and leaves it alone, which is why it can be written plainly here.
     message: "<red>You have been playing for <white><hours></white> hours.</red>"
 
 # The optional layer that ends a session rather than commenting on it.
