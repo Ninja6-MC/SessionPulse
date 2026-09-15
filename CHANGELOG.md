@@ -123,3 +123,15 @@ adheres to [Semantic Versioning](https://semver.org/).
   so it can be an ALPHA or BETA build; the version, Java and channel are written to the
   job summary. The Java is the minimum fill publishes for that version. It never runs on
   pull requests, is not a required check, and does not cover Spigot.
+- A release workflow, run when a `vX.Y.Z`, `-alpha.N`, `-beta.N` or `-rc.N` tag is pushed.
+  It refuses a malformed tag or one not on `main`, runs the tests, builds
+  `SessionPulse-<version>.jar` with a `.sha256` beside it, and publishes a GitHub release
+  whose notes come from this file and say the plugin requires Java 21. A stable tag needs
+  its own section here; a pre-release falls back to `[Unreleased]`. Modrinth (alpha, beta
+  and release) and Hangar (beta and release) are published when their tokens are
+  configured, and skipped otherwise.
+- The Hangar publishing plugin, driven entirely by properties and `HANGAR_API_TOKEN`, so
+  nothing about it runs during a build.
+- `META-INF/LICENSE` and `META-INF/THIRD_PARTY_NOTICES.md` in the plugin jar, carrying
+  the MIT notices of the shaded Adventure, adventure-platform, examination, option and
+  FoliaLib components. The build fails unless each is present exactly once.

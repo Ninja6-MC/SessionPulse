@@ -31,10 +31,12 @@ there is no separate release branch.
                 ┌─────────────────────┴─────────────────────┐
                 ▼                                           ▼
    ┌─────────────────────────┐                 ┌─────────────────────────┐
-   │   ALPHA (vX.Y.Z-alpha)  │                 │    BETA (vX.Y.Z-beta)   │
+   │  ALPHA (vX.Y.Z-alpha.N) │                 │  BETA / RC (-beta, -rc) │
    │ • Experimental          │                 │ • Feature-Complete      │
    │ • Internal / Staging    │                 │ • Public Testing        │
-   │ • GitHub Pre-release    │                 │ • Modrinth/Hangar Beta  │
+   │ • GitHub Pre-release    │                 │ • GitHub Pre-release    │
+   │ • Modrinth alpha        │                 │ • Modrinth beta         │
+   │                         │                 │ • Hangar Beta           │
    └────────────┬────────────┘                 └────────────┬────────────┘
                 │                                           │
                 └─────────────────────┬─────────────────────┘
@@ -43,29 +45,43 @@ there is no separate release branch.
                          │   MARKET / GA (vX.Y.Z)  │
                          │ • Production Stable     │
                          │ • GitHub Latest Release │
-                         │ • Modrinth Featured     │
+                         │ • Modrinth release      │
                          │ • Hangar Release        │
-                         │ • SpigotMC Resource     │
+                         │ • SpigotMC (manual)     │
                          └─────────────────────────┘
 ```
 
 | Tier | Git Tag Pattern | Source Branch | Stability Level | Published Channels |
 | :--- | :--- | :--- | :--- | :--- |
-| **Alpha** | `vX.Y.Z-alpha.N` | `main` | Experimental | GitHub Releases (*Pre-release*), CI Artifacts, Modrinth (*alpha*) |
-| **Beta / RC** | `vX.Y.Z-beta.N` | `main` | Feature-Complete | GitHub Releases (*Pre-release*), Modrinth (*beta*), Paper Hangar (*Beta*) |
-| **Market (GA)** | `vX.Y.Z` | `main` | Production Stable | GitHub Releases (*Latest*), Modrinth (*Featured*), Paper Hangar (*Release*), SpigotMC |
+| **Alpha** | `vX.Y.Z-alpha.N` | `main` | Experimental | GitHub Releases (*Pre-release*), Modrinth (*alpha*) |
+| **Beta / RC** | `vX.Y.Z-beta.N`, `vX.Y.Z-rc.N` | `main` | Feature-Complete | GitHub Releases (*Pre-release*), Modrinth (*beta*), Paper Hangar (*Beta*) |
+| **Market (GA)** | `vX.Y.Z` | `main` | Production Stable | GitHub Releases (*Latest*), Modrinth (*release*), Paper Hangar (*Release*), SpigotMC (*manual*) |
+
+Notes on the table:
+
+* **Modrinth has no "featured" channel.** A stable tag publishes a *release* version.
+  Featuring it on the project page is done by hand on Modrinth afterwards.
+* **SpigotMC is manual.** SpigotMC has no upload API; post the GA jar from the GitHub
+  release as a resource update yourself.
+* **Alpha skips Hangar.** Alphas go to GitHub and Modrinth only. SpiralGenesis differs: it
+  publishes alphas to a Hangar *Alpha* channel. SessionPulse's Hangar project needs only
+  *Beta* and *Release* channels.
+* **Release candidates publish as beta.** Neither registry has a release-candidate tier.
 
 ---
 
 ## 3. How to Execute a Release
 
 ### Step 1: Pre-Release Checklist
-1. All target PRs merged into `main`, with CI green on the merge commit.
+1. All target PRs merged into `main`, and **CI green on the commit you are about to tag**.
+   This is the gate. The release job runs `test` and `shadowJar`, not `build`, so the
+   sources and javadoc jars, and everything else `build` checks, are proven only by CI.
 2. Run test suite locally:
    ```bash
    ./gradlew test
    ```
-3. Update `CHANGELOG.md` under the target version header.
+3. Update `CHANGELOG.md`. A stable release needs a `## [X.Y.Z]` section, merged to `main`
+   before tagging. A pre-release may ship from `## [Unreleased]`.
 
 ### Step 2: Cut the Tag
 
@@ -76,16 +92,46 @@ git tag -a v0.1.0 -m "v0.1.0"
 git push origin v0.1.0
 ```
 
+Push release tags one at a time, by name. GitHub fires no tag push events at all when more
+than three tags are pushed at once, so `git push --tags` after several tags publishes
+nothing and reports nothing.
+
 ### Step 3: Automated CI Actions
 GitHub Actions (`.github/workflows/release.yml`) will:
 1. Reject the tag unless it matches `vMAJOR.MINOR.PATCH` with an optional `-alpha.N`,
    `-beta.N` or `-rc.N` suffix.
-2. Require a `## [MAJOR.MINOR.PATCH]` section in `CHANGELOG.md` for a stable release.
-3. Compile with Java 21 and run JUnit 5 tests.
-4. Build optimized `SessionPulse-<version>.jar`.
-5. Compute SHA-256 checksums (`SessionPulse-<version>.jar.sha256`).
-6. Publish release notes and JARs to GitHub Releases.
-7. Publish to Modrinth, then to Paper Hangar.
+2. Reject the tag unless it points at a commit on `main` (the tagged commit must be an
+   ancestor of `origin/main`).
+3. Validate the Gradle wrapper jar against Gradle's published checksums.
+4. Collect the release notes from `CHANGELOG.md`:
+   * a stable release requires a `## [X.Y.Z]` section, and fails without one;
+   * a pre-release uses `## [X.Y.Z-pre.N]` if present, else `## [X.Y.Z]`, else
+     `## [Unreleased]`, else the line "No changelog section was written for this
+     pre-release."
+
+   A section ends at the next `## ` heading or at the link references at the foot of the
+   file. The same notes go to GitHub, Modrinth and Hangar; the GitHub release adds a
+   "Requires Java 21." line after them.
+5. Compile with Java 21 and run the JUnit 6 tests.
+6. Build the shaded, relocated `SessionPulse-<version>.jar` (FoliaLib and Adventure
+   relocated under `com.ninja6.sessionpulse.lib`, with `META-INF/LICENSE` and
+   `META-INF/THIRD_PARTY_NOTICES.md`), and check it is the only jar in `build/libs`.
+7. Compute its SHA-256 checksum (`SessionPulse-<version>.jar.sha256`, holding a bare
+   filename so `sha256sum -c` works beside the downloaded jar).
+8. Publish the jar, the checksum and the notes to GitHub Releases, as a pre-release for
+   `-alpha`, `-beta` and `-rc` tags and as the latest release for a stable tag.
+9. Publish to Modrinth, then to Paper Hangar (beta, rc and stable only).
+
+**Requires Java 21.** The plugin is built for Java 21 and declares it on Modrinth; every
+server must run on Java 21 or newer to load it, including 1.20.4-1.20.6, which
+Minecraft itself allows on Java 17.
+
+### First Run
+
+The first pre-release tag pushed to this repository is the rehearsal for the pipeline.
+Issue #32 stays open until that run produces a complete GitHub pre-release (jar, checksum
+and notes) with both registry steps skipped, because no registry token is configured yet.
+Add the registry tokens after that run, not before.
 
 ### Repository Secrets
 
@@ -96,4 +142,31 @@ GitHub Actions (`.github/workflows/release.yml`) will:
 
 Neither is required for a release to succeed. Without them the workflow still tests,
 builds and publishes to GitHub Releases, and simply skips the registry it has no token
-for.
+for. The workflow uses no deployment environment.
+
+### Repository Variables
+
+| Variable | Used by | Default when unset |
+| :--- | :--- | :--- |
+| `MODRINTH_PROJECT` | Modrinth step, as the project ID or slug | `sessionpulse` |
+| `HANGAR_PROJECT` | Hangar step, as the project slug (`-PhangarProject`) | `SessionPulse` |
+
+Set them only if a registry project is created under a different slug.
+
+### When a Registry Step Fails
+
+Publishing is **not atomic**. The GitHub release, the Modrinth upload and the Hangar upload
+are independent steps, and whatever succeeded before a failure stays published. Do not
+re-run the whole job: GitHub Actions cannot re-run a single step, and a registry rejects a
+second upload of a version it already holds. Re-run only the failed step, by hand, with the
+jar and notes already on the GitHub release:
+
+* **Modrinth:** upload the jar as a new version with the same version number, channel,
+  loaders, game versions and changelog as the workflow uses.
+* **Hangar:** from a checkout of the tagged commit, with `HANGAR_API_TOKEN` set and the
+  release notes saved as `build/release-notes.md`, run
+  `./gradlew publishPluginPublicationToHangar -PpluginVersion=<version> -PhangarChannel=<Beta|Release>`.
+
+The Minecraft versions declared to both registries are one explicit list, kept in
+`build.gradle.kts` (`releaseGameVersions`) and in `release.yml` (`game-versions`): 1.20.4
+to 1.20.6 and 1.21 to 1.21.11. Edit both together.
