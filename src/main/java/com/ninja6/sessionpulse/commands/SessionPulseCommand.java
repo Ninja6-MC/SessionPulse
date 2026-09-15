@@ -110,7 +110,8 @@ public final class SessionPulseCommand implements CommandExecutor, TabCompleter 
             + "(<minutes> min). Lifetime: <yellow><lifetime>h</yellow>.</gray>";
     static final String TIME_OTHER = "<gray><white><player></white>'s counted window: "
             + "<yellow><hours>h</yellow> (<minutes> min). Lifetime: <yellow><lifetime>h</yellow>.</gray>";
-    static final String TIME_CONSOLE = "<red>From the console, name a player: /spulse time \\<player></red>";
+    // Not "from the console": a command block or a proxy sender is neither a player nor that.
+    static final String TIME_NOT_PLAYER = "<red>Name a player: /spulse time \\<player></red>";
     static final String USAGE_TIME = "<red>Usage: /spulse time [player]</red>";
     static final String NO_RECORD = "<red>No playtime recorded for <player>.</red>";
     static final String TOP_HEADER = "<gold>Top playtime</gold>";
@@ -235,7 +236,7 @@ public final class SessionPulseCommand implements CommandExecutor, TabCompleter 
             if (sender instanceof Player self) {
                 showTime(sender, self.getUniqueId(), self.getName(), true);
             } else {
-                reply(sender, TIME_CONSOLE);
+                reply(sender, TIME_NOT_PLAYER);
             }
             return;
         }
@@ -388,8 +389,12 @@ public final class SessionPulseCommand implements CommandExecutor, TabCompleter 
             }
             shown = record.name() != null ? record.name() : name;
         }
-        boolean hadCooldown = storage.cooldownExpiresMillis(uuid) != 0L;
-        if (hadCooldown) {
+        long cooldown = storage.cooldownExpiresMillis(uuid);
+        // The reply names only a cooldown that was still keeping the player out. A lapsed one
+        // is cleared all the same, so the record reads as having none, but the operator did
+        // not lift anything and is not told they did.
+        boolean hadCooldown = cooldown > clock.wallMillis();
+        if (cooldown != 0L) {
             // Zero is "no cooldown": the login gate admits it. setCooldown forces a flush.
             storage.setCooldown(uuid, null, 0L);
         } else {

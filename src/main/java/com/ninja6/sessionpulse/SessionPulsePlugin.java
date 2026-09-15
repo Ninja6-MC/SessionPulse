@@ -264,6 +264,8 @@ public class SessionPulsePlugin extends JavaPlugin {
      */
     private void loadConfiguration() {
         PluginConfig next = new PluginConfig(getConfig());
+        // Read once: a reload on a region thread can race onDisable nulling it.
+        SessionTracker tracker = this.tracker;
         if (tracker == null) {
             this.config = next;
         } else {

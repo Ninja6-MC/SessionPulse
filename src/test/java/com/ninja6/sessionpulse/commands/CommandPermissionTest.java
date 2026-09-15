@@ -50,6 +50,13 @@ class CommandPermissionTest {
         assertEquals(List.of(REFUSED), fx.run(ada, "reload"));
         assertEquals(List.of(REFUSED), fx.run(ada, "time", "Grace"),
                 "another player's time needs sessionpulse.admin");
+        // The refusal comes before any lookup, so it reads the same for a name with no record
+        // and for an offline name with one: the reply cannot be used to probe the store.
+        Player grace = fx.online.get("grace");
+        fx.tick(java.time.Duration.ofMinutes(5));
+        fx.quit(grace);
+        assertEquals(List.of(REFUSED), fx.run(ada, "time", "Grace"), "offline, with a record");
+        assertEquals(List.of(REFUSED), fx.run(ada, "time", "Nobody"), "no record at all");
         assertEquals(0, fx.reloads);
 
         List<String> own = fx.run(ada, "time", "ADA");

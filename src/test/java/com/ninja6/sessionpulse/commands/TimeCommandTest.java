@@ -59,13 +59,13 @@ class TimeCommandTest {
     }
 
     @Test
-    @DisplayName("the console must name a player, and can")
+    @DisplayName("a sender who is not a player must name one, and can")
     void consoleNeedsAName() {
         CommandFixture fx = new CommandFixture(dir);
         fx.join(CommandFixture.player("Ada", Set.of()));
         fx.tick(Duration.ofMinutes(6));
 
-        assertEquals(List.of("chat:From the console, name a player: /spulse time <player>"),
+        assertEquals(List.of("chat:Name a player: /spulse time <player>"),
                 fx.run(CommandFixture.console(), "time"));
         assertEquals(List.of("chat:Ada's counted window: 0.1h (6 min). Lifetime: 0.1h."),
                 fx.run(CommandFixture.console(), "time", "ADA"));

@@ -98,6 +98,45 @@ class ResetCommandTest {
     }
 
     @Test
+    @DisplayName("a lapsed cooldown is cleared but not reported as lifted")
+    void lapsedCooldown() {
+        CommandFixture fx = new CommandFixture(dir);
+        Player ada = fx.join(CommandFixture.player("Ada", Set.of()));
+        fx.tick(Duration.ofMinutes(5));
+        fx.storage.setCooldown(ada.getUniqueId(), "Ada", fx.clock.wallMillis() - 1L);
+
+        assertEquals(List.of("chat:Reset Ada's counted window."),
+                fx.run(CommandFixture.console(), "reset", "Ada"));
+        assertEquals(0L, fx.storage.cooldownExpiresMillis(ada.getUniqueId()),
+                "a stale value is still cleared");
+    }
+
+    @Test
+    @DisplayName("an online player is acted on by UUID, not by a stored record under their name")
+    void onlinePlayerWinsOverAStoredNamesake() {
+        CommandFixture fx = new CommandFixture(dir);
+        java.util.UUID renamed = java.util.UUID.randomUUID();
+        long wall = fx.clock.wallMillis();
+        fx.storage.save(renamed, new com.ninja6.sessionpulse.session.SessionSnapshot(
+                "Ada", 7200L, wall - 1_000L, 1800L, wall - 1_000L));
+        fx.storage.setCooldown(renamed, null, wall + 3_600_000L);
+        StoredPlayer before = fx.storage.records().get(renamed);
+        Player ada = fx.join(CommandFixture.player("Ada", Set.of()));
+        fx.tick(Duration.ofMinutes(6));
+        assertNull(fx.storage.records().get(ada.getUniqueId()), "precondition: not flushed");
+
+        assertEquals(List.of("chat:Ada's counted window: 0.1h (6 min). Lifetime: 0.1h."),
+                fx.run(CommandFixture.console(), "time", "Ada"),
+                "time read the stored namesake instead of the player online");
+        assertEquals(List.of("chat:Reset Ada's counted window."),
+                fx.run(CommandFixture.console(), "reset", "Ada"));
+
+        assertEquals(0L, fx.tracker.session(ada.getUniqueId()).windowSeconds());
+        assertEquals(before, fx.storage.records().get(renamed),
+                "reset rewrote the namesake's record and cleared their cooldown");
+    }
+
+    @Test
     @DisplayName("an unknown name is an error and creates no record")
     void unknownName() {
         CommandFixture fx = new CommandFixture(dir);

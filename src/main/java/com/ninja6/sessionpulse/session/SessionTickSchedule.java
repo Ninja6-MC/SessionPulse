@@ -32,7 +32,8 @@ import java.util.function.LongSupplier;
  * <p>The two tasks cannot double-credit. Accrual is a delta claim against the session's own
  * mark, so whichever task runs claims only the interval since the last claim, whoever made it.
  * The new task waits its delay before its first run, and any gap that leaves is credited in
- * full on the next tick, because the mark did not move.
+ * full on the next tick, because the mark did not move - unless the player is AFK at that
+ * tick, as for any interval.
  *
  * <h2>Threading</h2>
  *

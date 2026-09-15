@@ -58,8 +58,7 @@ public final class Placeholders {
      * @return a copy with the value set
      */
     public Placeholders hours(long countedSeconds) {
-        long tenths = Math.max(0, countedSeconds) / 360;
-        return with("hours", tenths / 10 + "." + tenths % 10);
+        return with("hours", tenthsOfHours(countedSeconds));
     }
 
     /**
@@ -105,8 +104,13 @@ public final class Placeholders {
      * @return a copy with the value set
      */
     public Placeholders lifetime(long lifetimeSeconds) {
-        long tenths = Math.max(0, lifetimeSeconds) / 360;
-        return with("lifetime", tenths / 10 + "." + tenths % 10);
+        return with("lifetime", tenthsOfHours(lifetimeSeconds));
+    }
+
+    /** Hours to one decimal place, truncated, from seconds; a negative is zero. */
+    private static String tenthsOfHours(long seconds) {
+        long tenths = Math.max(0, seconds) / 360;
+        return tenths / 10 + "." + tenths % 10;
     }
 
     /** Every value set, in the order it was set. Unmodifiable. */
