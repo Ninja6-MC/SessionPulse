@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 #
-# Boots a local Paper server with the freshly built plugin installed, for manual testing
-# of session tracking, reminders and the /spulse command.
+# Boots a local Paper or Folia server with the freshly built plugin installed, for manual
+# testing of session tracking, reminders and the /spulse command.
 #
-# Usage: scripts/dev-server.sh [mc-version]
+# Usage: scripts/dev-server.sh [paper|folia] [mc-version]
 #
-# Paper only. Folia arrives with the scheduler abstraction, and the smoke matrix is CI's
-# job, not this script's.
+# Both arguments are optional and the platform defaults to paper. A first argument that
+# starts with a digit is read as the version, so the old one-argument form
+# `scripts/dev-server.sh 1.21.11` still boots Paper. The smoke matrix is CI's job, not
+# this script's; scripts/dev-server.ps1 is the same thing for Windows PowerShell.
 #
 # The world is flat and unseeded, unlike SpiralGenesis's dev server, which needs real
 # generated terrain because it allocates spawns. SessionPulse counts seconds and sends
@@ -20,11 +22,24 @@
 
 set -euo pipefail
 
+PLATFORM="paper"
+if [[ $# -gt 0 && ! "$1" =~ ^[0-9] ]]; then
+    PLATFORM="$1"
+    shift
+fi
+case "$PLATFORM" in
+    paper | folia) ;;
+    *)
+        echo "error: platform must be paper or folia, not '$PLATFORM'" >&2
+        exit 2
+        ;;
+esac
 MC_VERSION="${1:-1.20.4}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUNDIR="$REPO_ROOT/run"
-SERVER_JAR="$RUNDIR/paper-$MC_VERSION.jar"
+# Per platform in the name, so switching between Paper and Folia keeps both cached.
+SERVER_JAR="$RUNDIR/$PLATFORM-$MC_VERSION.jar"
 
 cd "$REPO_ROOT"
 
@@ -52,8 +67,8 @@ mkdir -p "$RUNDIR/plugins"
 # Resolve and download the server jar (cached between runs)
 # ---------------------------------------------------------------------------
 if [[ ! -f "$SERVER_JAR" ]]; then
-    echo "==> Resolving Paper $MC_VERSION"
-    API="https://fill.papermc.io/v3/projects/paper/versions/$MC_VERSION/builds/latest"
+    echo "==> Resolving $PLATFORM $MC_VERSION"
+    API="https://fill.papermc.io/v3/projects/$PLATFORM/versions/$MC_VERSION/builds/latest"
     BUILD_JSON="$(curl -fsS --retry 3 --retry-delay 5 -m 60 "$API")"
 
     # jq is present in CI but not in a stock Git Bash, so slice the payload by hand.
@@ -65,7 +80,7 @@ if [[ ! -f "$SERVER_JAR" ]]; then
         | grep -oE '[a-f0-9]{64}')"
 
     if [[ -z "$JAR_URL" || -z "$JAR_SHA" ]]; then
-        echo "error: could not resolve a download for Paper $MC_VERSION" >&2
+        echo "error: could not resolve a download for $PLATFORM $MC_VERSION" >&2
         exit 1
     fi
 
