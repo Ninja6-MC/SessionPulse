@@ -9,6 +9,12 @@ import java.util.zip.ZipFile
 plugins {
     `java-library`
     id("com.gradleup.shadow") version "9.6.1"
+    // Hangar has no publish API that a generic action can drive, so publication goes
+    // through PaperMC's own Gradle plugin; Modrinth is published from the workflow. The
+    // same plugin and version as SpiralGenesis. Applying it registers
+    // publishPluginPublicationToHangar and nothing else: no task of an ordinary build or
+    // test depends on it, and the API token is read lazily, only when that task runs.
+    id("io.papermc.hangar-publish-plugin") version "0.1.4"
 }
 
 group = "com.ninja6.sessionpulse"
@@ -115,6 +121,61 @@ dependencies {
     // speaks. A SNAPSHOT, so it can drift under us: when a smoke leg goes red on a bot
     // decode error rather than an assertion, suspect this line before the plugin.
     "botClientImplementation"("org.geysermc.mcprotocollib:protocol:1.21.11-SNAPSHOT")
+}
+
+// The Minecraft versions a release declares, on Hangar here and on Modrinth in
+// .github/workflows/release.yml. The two lists are the same list and must be edited
+// together.
+//
+// Explicit, not `1.20.x`/`1.21.x` or a range. api-version in plugin.yml is 1.20 and the
+// compile target is 1.20.4, so 1.20.0-1.20.3 are not claimed; and the boot legs in ci.yml
+// cover 1.20.4 and 1.21.11, so nothing newer than 1.21.11 is. 26.x in particular is NOT
+// claimed: it refuses to boot below Java 25 and adventure-platform-bukkit 4.4.1 predates
+// it, which ci.yml records as unmeasured. Widening this list is a compatibility claim and
+// belongs with the evidence for it, not with a release.
+//
+// Comma-separated because Hangar's platformVersions is a List<String> and the property
+// has to arrive as one string; it is split below exactly as SpiralGenesis splits it.
+val releaseGameVersions =
+    "1.20.4,1.20.5,1.20.6,1.21,1.21.1,1.21.2,1.21.3,1.21.4,1.21.5,1.21.6,1.21.7,1.21.8," +
+        "1.21.9,1.21.10,1.21.11"
+
+// Hangar publication. Every value is a property or an environment variable so the
+// release workflow can set it per tag, and nothing here runs during a build or a test:
+// `./gradlew tasks --all` lists publishPluginPublicationToHangar with no token present.
+//
+// Hangar is skipped for alpha tags by the workflow, not here, per the tier table in
+// RELEASE_PROCESS.md. SpiralGenesis publishes alphas to a Hangar Alpha channel; this
+// project deliberately does not, so the channel default below is only ever overridden
+// with Beta or Release.
+hangarPublish {
+    publications.register("plugin") {
+        // The workflow passes the HANGAR_PROJECT repository variable, or SessionPulse.
+        id.set(providers.gradleProperty("hangarProject").orElse("SessionPulse"))
+        version.set(project.version.toString())
+        // Hangar channel names are capitalised and must already exist on the project.
+        channel.set(providers.gradleProperty("hangarChannel").orElse("Release"))
+        apiKey.set(providers.environmentVariable("HANGAR_API_TOKEN"))
+        // Written by the release workflow before it publishes, from CHANGELOG.md. Absent
+        // only on a local invocation, where the fallback applies. The fallback is the same
+        // sentence the workflow writes for a pre-release with no changelog section; it
+        // never points at the GitHub release, which is not a changelog either.
+        changelog.set(
+            providers.fileContents(layout.buildDirectory.file("release-notes.md")).asText
+                .orElse("No changelog section was written for this pre-release.")
+        )
+
+        platforms {
+            paper {
+                jar.set(tasks.shadowJar.flatMap { it.archiveFile })
+                platformVersions.set(
+                    providers.gradleProperty("hangarPlatformVersions")
+                        .orElse(releaseGameVersions)
+                        .map { versions -> versions.split(",").map(String::trim).filter(String::isNotEmpty) }
+                )
+            }
+        }
+    }
 }
 
 tasks {
@@ -257,6 +318,27 @@ tasks {
         duplicatesStrategy = DuplicatesStrategy.INCLUDE
         mergeServiceFiles()
 
+        // Licence notices. Every shaded component is MIT, and MIT's one condition is that
+        // its copyright and permission notice travel with every copy - which a shaded jar
+        // is. None of the upstream jars carries a LICENSE entry of its own, so before this
+        // the plugin jar shipped their code with no notice at all. The project's own
+        // GPL-3.0 text travels beside them.
+        //
+        // META-INF, not the jar root: the root is the plugin's resource namespace, where a
+        // LICENSE would sit next to plugin.yml and config.yml and could be mistaken for, or
+        // shadowed by, a resource a server loads.
+        //
+        // The INCLUDE line above is why the doLast below counts these entries rather than
+        // merely looking for them: under INCLUDE a dependency that one day ships its own
+        // META-INF/LICENSE would be written as a SECOND entry of the same name, and which
+        // one a reader of the jar gets is then up to the reader.
+        from(layout.projectDirectory.file("LICENSE")) {
+            into("META-INF")
+        }
+        from(layout.projectDirectory.file("THIRD_PARTY_NOTICES.md")) {
+            into("META-INF")
+        }
+
         // -------------------------------------------------------------------------
         // Relocation. The org's first, so the reasoning is recorded rather than assumed.
         // -------------------------------------------------------------------------
@@ -343,6 +425,24 @@ tasks {
                 // the second.
                 requireEntry("com/ninja6/sessionpulse/lib/kyori/adventure/text/serializer/legacy/LegacyComponentSerializer.class")
 
+                // The licence notices, exactly once each. Not requireEntry: these are not
+                // relocated, and "missing" is only half of what can go wrong - see the
+                // duplicatesStrategy note on the from() blocks above. Counted over the raw
+                // entry list, which keeps a duplicated name as two entries.
+                fun requireSingleNotice(entry: String) {
+                    val count = names.count { it == entry }
+                    if (count != 1) {
+                        throw GradleException(
+                            "Licence notice $entry occurs $count time(s) in the jar; it must " +
+                                "occur exactly once. Zero means the shaded code ships without " +
+                                "the notice its MIT licence requires; more than one means a " +
+                                "dependency brought its own copy under DuplicatesStrategy.INCLUDE."
+                        )
+                    }
+                }
+                requireSingleNotice("META-INF/LICENSE")
+                requireSingleNotice("META-INF/THIRD_PARTY_NOTICES.md")
+
                 // The service files are the half that fails silently at runtime, so they are
                 // checked by name AND by content.
                 val services = names.filter { it.startsWith("META-INF/services/") }
@@ -369,7 +469,7 @@ tasks {
                     }
                 }
             }
-            logger.lifecycle("Relocation verified in ${jar.name}.")
+            logger.lifecycle("Relocation and licence notices verified in ${jar.name}.")
         }
     }
 
