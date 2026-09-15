@@ -109,3 +109,11 @@ adheres to [Semantic Versioning](https://semver.org/).
 - A platform argument for `scripts/dev-server.sh` (`[paper|folia] [mc-version]`, with
   the old version-only form still booting Paper), and `scripts/dev-server.ps1`, the
   same dev server for Windows PowerShell 5.1.
+- A Spigot 1.21.11 leg in the smoke matrix, playing the same scripted session as the
+  Paper and Folia legs. The server jar is built with BuildTools on the runner and kept in
+  the repository's Actions cache, keyed by the BuildTools build, so a warm run does not
+  rebuild it. The smoke kick message is now coloured, and the bot legs assert that no
+  MiniMessage tag or section sign reaches the bot unparsed, except on Spigot's login
+  refusal, which CraftBukkit sends as literal text that the client still colours.
+- `spigot` as a platform for `scripts/dev-server.sh` and `scripts/dev-server.ps1`, which
+  build the server jar with BuildTools on the first run and reuse it after that.

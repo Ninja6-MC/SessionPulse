@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Boots a local Paper or Folia server with the freshly built plugin installed.
+    Boots a local Paper, Folia or Spigot server with the freshly built plugin installed.
 
 .DESCRIPTION
     The Windows PowerShell counterpart of scripts/dev-server.sh, for manual testing of
@@ -12,8 +12,13 @@
     null-coalescing, no && chains. Resolves the server through PaperMC's v3 "fill" API and
     verifies the download against the SHA-256 the API publishes before executing it.
 
+    Spigot publishes no server jar, so for spigot the first run builds one with BuildTools:
+    it needs git on PATH, takes 10-25 minutes and about 2GB under run\buildtools, and the
+    jar it leaves at run\spigot-<Version>.jar is reused after that. Delete the jar to
+    rebuild it.
+
 .PARAMETER Platform
-    paper (default) or folia.
+    paper (default), folia or spigot.
 
 .PARAMETER Version
     Minecraft version, default 1.20.4.
@@ -23,7 +28,7 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('paper', 'folia')]
+    [ValidateSet('paper', 'folia', 'spigot')]
     [string]$Platform = 'paper',
     [string]$Version = '1.20.4'
 )
@@ -61,7 +66,41 @@ New-Item -ItemType Directory -Force -Path (Join-Path $RunDir 'plugins') | Out-Nu
 # ---------------------------------------------------------------------------
 # Resolve and download the server jar (cached between runs)
 # ---------------------------------------------------------------------------
-if (-not (Test-Path $ServerJar)) {
+if (-not (Test-Path $ServerJar) -and $Platform -eq 'spigot') {
+    # BuildTools clones Spigot's repositories with git and fails a long way in without it,
+    # so check first.
+    if ($null -eq (Get-Command git -ErrorAction SilentlyContinue)) {
+        throw 'building spigot needs git on PATH'
+    }
+    Write-Host "==> Building spigot $Version with BuildTools (10-25 minutes on the first run)"
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    $BtBuild = (Invoke-RestMethod -Uri 'https://hub.spigotmc.org/jenkins/job/BuildTools/lastSuccessfulBuild/api/json?tree=number' -UseBasicParsing).number
+    if ($null -eq $BtBuild) {
+        throw 'could not resolve the latest BuildTools build'
+    }
+    $BtDir = Join-Path $RunDir 'buildtools'
+    $BtJar = Join-Path $BtDir "BuildTools-$BtBuild.jar"
+    New-Item -ItemType Directory -Force -Path $BtDir | Out-Null
+    if (-not (Test-Path $BtJar)) {
+        Invoke-WebRequest -Uri "https://hub.spigotmc.org/jenkins/job/BuildTools/$BtBuild/artifact/target/BuildTools.jar" -OutFile "$BtJar.tmp" -UseBasicParsing
+        Move-Item -Force "$BtJar.tmp" $BtJar
+    }
+    Write-Host "    BuildTools build $BtBuild"
+    Push-Location $BtDir
+    try {
+        & java -jar $BtJar --rev $Version --compile SPIGOT --output-dir $RunDir --final-name "spigot-$Version.jar"
+        if ($LASTEXITCODE -ne 0) {
+            throw "BuildTools failed with exit code $LASTEXITCODE"
+        }
+    }
+    finally {
+        Pop-Location
+    }
+    if (-not (Test-Path $ServerJar)) {
+        throw "BuildTools finished without producing $ServerJar"
+    }
+}
+elseif (-not (Test-Path $ServerJar)) {
     Write-Host "==> Resolving $Platform $Version"
     # PowerShell 5.1 defaults to TLS 1.0/1.1 on older machines; fill.papermc.io needs 1.2.
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
@@ -126,5 +165,9 @@ Write-Host "==> Starting $Platform $Version. Type ``stop`` to shut down."
 Write-Host ''
 
 Set-Location $RunDir
-& java -Xms1G -Xmx2G -jar $ServerJar --nogui
+# A BuildTools jar here is never refreshed, so CraftBukkit soon calls it outdated and
+# sleeps 20 seconds on every boot. The flag skips that, as smoke-test.sh does.
+$JvmFlags = @()
+if ($Platform -eq 'spigot') { $JvmFlags += '-DIReallyKnowWhatIAmDoingISwear' }
+& java -Xms1G -Xmx2G @JvmFlags -jar $ServerJar --nogui
 exit $LASTEXITCODE
