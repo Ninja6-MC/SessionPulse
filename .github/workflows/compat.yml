@@ -1,0 +1,216 @@
+name: Latest Server Compatibility
+
+# The boot matrix in ci.yml pins its Minecraft versions, which is what makes it a fair
+# required-adjacent signal: a red leg there means this repository changed. It also means
+# it cannot notice the day PaperMC ships a server the plugin no longer comes up on. This
+# workflow is the other half: once a week it asks fill for the newest Paper and Folia and
+# boots the plugin on those, whatever they are that morning.
+#
+# "Newest" is the newest *version* that is not a release candidate or pre-release, and
+# NOT the newest stable build. Those are different things on fill: a version can exist
+# with no STABLE build at all. On 2026-09-15 this resolves Paper 26.3, whose only build is
+# ALPHA, and Folia 26.2, whose builds are all BETA. Waiting for STABLE would test servers
+# people already run a month late, so the run takes whatever build channel the version
+# has, and writes that channel to the job summary next to the version and the Java it ran
+# on, so a red run on an ALPHA build reads as what it is.
+#
+# Spigot is excluded. BuildTools has no discoverable "latest" the way fill v3 does, and
+# a 10-25 minute build a week for a guess at the newest revision is not worth it. That is
+# a scope note about this workflow, not a change to the platforms the plugin claims.
+#
+# Expect occasional red. A brand-new server is allowed to break things, and the boot-only
+# checks in smoke-test.sh are deliberately broad - any linkage error, any
+# UnsupportedOperationException - so a healthy 26.x can trip them too. They are not
+# weakened for this workflow; a red run here is a prompt to look, not a blocked merge.
+on:
+  # Never pull_request or push. The result depends on what PaperMC published this week,
+  # not on the change under review, so it must not be able to fail a pull request, and it
+  # is not a required check. Mondays at 06:00 UTC, and on demand.
+  #
+  # GitHub disables scheduled workflows in a repository with no activity for 60 days. The
+  # Actions tab says so when it happens; re-enabling it there is all it takes.
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+# Prefixed rather than bare. ci.yml's group is `${{ github.workflow }}-${{ github.ref }}`
+# and the workflow names differ, so the two could not collide anyway. Not cancelled: a
+# manual dispatch landing on the Monday run should queue behind it, not kill a boot that
+# is halfway through.
+concurrency:
+  group: compat-${{ github.ref }}
+  cancel-in-progress: false
+
+# Reads the repository, builds, boots and uploads a log. Nothing writes back.
+permissions:
+  contents: read
+
+jobs:
+  latest:
+    name: ${{ matrix.platform }} (latest)
+    runs-on: ubuntu-latest
+    # One cold build and one boot-only smoke test; no bot, no BuildTools.
+    timeout-minutes: 30
+
+    strategy:
+      # Paper and Folia break for different reasons, and seeing both is the point.
+      fail-fast: false
+      matrix:
+        platform: [paper, folia]
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Validated before anything runs ./gradlew, attempted twice because
+      # services.gradle.org has no retry of its own. The reasoning is written out in
+      # ci.yml's build job.
+      - name: Validate Gradle Wrapper
+        id: wrapper
+        continue-on-error: true
+        uses: gradle/actions/wrapper-validation@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+
+      - name: Wait Before Revalidating
+        if: steps.wrapper.outcome == 'failure'
+        run: sleep 15
+
+      - name: Validate Gradle Wrapper (retry)
+        if: steps.wrapper.outcome == 'failure'
+        uses: gradle/actions/wrapper-validation@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+
+      # fill lists a project's versions grouped by API bucket, newest bucket first and
+      # newest version first within it, so the first entry left after dropping the rc and
+      # pre tags is the newest release. Both spellings are in use - `26.3-rc-3` and
+      # `1.21.11-rc3` - and the pattern matches either. The summary prints the pick, so
+      # an ordering change on fill's side shows up there as an old version.
+      #
+      # The Java comes from fill too: each version publishes the minimum it boots on. The
+      # major-version rule (26 and newer need 25, anything older 21) is only a fallback for
+      # a version that leaves the field out. Only 21 and 25 are wired up below, so any
+      # other answer fails the leg by name instead of booting on a guess.
+      - name: Resolve Latest Version
+        id: resolve
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          API="https://fill.papermc.io/v3/projects/$PLATFORM"
+          VERSION="$(curl -fsSL --retry 3 --retry-delay 5 -m 60 "$API" \
+            | jq -r '[.versions[][]] | map(select(test("-(rc|pre)"; "i") | not)) | first // empty')"
+          if [ -z "$VERSION" ]; then
+            echo "::error::fill listed no release version for $PLATFORM."
+            exit 1
+          fi
+
+          JAVA="$(curl -fsSL --retry 3 --retry-delay 5 -m 60 "$API/versions/$VERSION" \
+            | jq -r '.version.java.version.minimum // empty')"
+          if [ -z "$JAVA" ]; then
+            MAJOR="${VERSION%%.*}"
+            if ! [[ "$MAJOR" =~ ^[0-9]+$ ]]; then
+              echo "::error::fill gave no Java minimum for $PLATFORM $VERSION, and its major version '$MAJOR' is not numeric."
+              exit 1
+            fi
+            if [ "$MAJOR" -ge 26 ]; then JAVA=25; else JAVA=21; fi
+            echo "::warning::fill gave no Java minimum for $PLATFORM $VERSION; assuming Java $JAVA from the major version."
+          fi
+          case "$JAVA" in
+            21|25) ;;
+            *)
+              echo "::error::fill says $PLATFORM $VERSION needs Java $JAVA; this workflow only sets up 21 and 25."
+              exit 1
+              ;;
+          esac
+
+          # Informational only: the smoke test downloads builds/latest itself, whatever
+          # its channel. An empty field is reported rather than failed on.
+          CHANNEL="$(curl -fsSL --retry 3 --retry-delay 5 -m 60 "$API/versions/$VERSION/builds/latest" \
+            | jq -r '.channel // empty')"
+          CHANNEL="${CHANNEL:-unknown}"
+
+          echo "Resolved $PLATFORM $VERSION ($CHANNEL) on Java $JAVA"
+          {
+            echo "version=$VERSION"
+            echo "java=$JAVA"
+            echo "channel=$CHANNEL"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### $PLATFORM (latest)"
+            echo ""
+            echo "| Version | Java | Build channel |"
+            echo "| --- | --- | --- |"
+            echo "| $VERSION | $JAVA | $CHANNEL |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # The server's JDK first and Gradle's second, the reverse of ci.yml's boot job: the
+      # later setup-java leaves JAVA_HOME and PATH on 21 for the build, and the boot step
+      # switches to the server's JDK by its JAVA_HOME_<major>_X64 variable. When the
+      # resolved version is 21 the two steps install the same JDK.
+      - name: Set up Java ${{ steps.resolve.outputs.java }}
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          java-version: ${{ steps.resolve.outputs.java }}
+          distribution: 'temurin'
+
+      - name: Set up Java 21 For The Build
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+
+      # Defensive only, as in ci.yml: both carry the executable bit in the index today.
+      - name: Ensure Scripts Are Executable
+        run: chmod +x ./gradlew .github/scripts/smoke-test.sh
+
+      # shadowJar, not build: this workflow tests whether the plugin boots on a new
+      # server, and the tests, sources and javadoc are ci.yml's job on every pull request.
+      - name: Build Plugin
+        run: ./gradlew shadowJar --no-daemon
+
+      - name: Boot Latest Server
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          MC_VERSION: ${{ steps.resolve.outputs.version }}
+          JAVA_MAJOR: ${{ steps.resolve.outputs.java }}
+        run: |
+          set -euo pipefail
+          JAVA_HOME_VAR="JAVA_HOME_${JAVA_MAJOR}_X64"
+          SERVER_JAVA_HOME="${!JAVA_HOME_VAR:-}"
+          if [ -z "$SERVER_JAVA_HOME" ]; then
+            echo "::error::$JAVA_HOME_VAR is not set; the Java $JAVA_MAJOR setup did not run."
+            exit 1
+          fi
+          export JAVA_HOME="$SERVER_JAVA_HOME"
+          export PATH="$JAVA_HOME/bin:$PATH"
+          java -version
+
+          # The same denylist as ci.yml's upload step: build/libs also holds the -thin
+          # jar, which is not the plugin. -maxdepth 1 because the directory is flat.
+          JAR="$(find build/libs -maxdepth 1 -name 'SessionPulse*.jar' ! -name '*-thin.jar' ! -name '*-sources.jar' ! -name '*-javadoc.jar' | head -1)"
+          # find exits 0 on no match, so an empty result has to be caught here rather
+          # than surfacing as a confusing failure inside the script.
+          if [ -z "$JAR" ]; then
+            echo "::error::shadowJar produced no plugin jar in build/libs."
+            exit 1
+          fi
+          echo "Booting $PLATFORM $MC_VERSION with $JAR"
+
+          # BOT_JAR is left unset, so this is the boot-only test. The bot is MCProtocolLib
+          # pinned to the 1.21.11 protocol and cannot join a newer server.
+          unset BOT_JAR
+          .github/scripts/smoke-test.sh "$PLATFORM" "$MC_VERSION" "$JAR"
+
+      # if: always(), because the log is most wanted on the runs that failed. Kept a week
+      # longer than ci.yml's, since a weekly run's log should outlive the next run.
+      - name: Upload Server Log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: compat-log-${{ matrix.platform }}-latest
+          path: run-${{ matrix.platform }}/server.log
+          retention-days: 14
+          if-no-files-found: warn
