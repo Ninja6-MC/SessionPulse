@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# Boots a local Paper or Folia server with the freshly built plugin installed, for manual
-# testing of session tracking, reminders and the /spulse command.
+# Boots a local Paper, Folia or Spigot server with the freshly built plugin installed, for
+# manual testing of session tracking, reminders and the /spulse command.
 #
-# Usage: scripts/dev-server.sh [paper|folia] [mc-version]
+# Usage: scripts/dev-server.sh [paper|folia|spigot] [mc-version]
 #
 # Both arguments are optional and the platform defaults to paper. A first argument that
 # starts with a digit is read as the version, so the old one-argument form
@@ -19,6 +19,11 @@
 # which now returns 403, and every 3.x release requires Gradle 9 while this project is on
 # 8.10.2. Adding a plugin known not to work would be copying a wart rather than a
 # pattern. This resolves through the v3 "fill" API instead.
+#
+# Spigot publishes no server jar, so for spigot the first run builds one with BuildTools:
+# it needs git on PATH, takes 10-25 minutes and about 2GB under run/buildtools, and the
+# jar it leaves at run/spigot-<mc-version>.jar is reused after that. Delete the jar to
+# rebuild it.
 
 set -euo pipefail
 
@@ -28,9 +33,9 @@ if [[ $# -gt 0 && ! "$1" =~ ^[0-9] ]]; then
     shift
 fi
 case "$PLATFORM" in
-    paper | folia) ;;
+    paper | folia | spigot) ;;
     *)
-        echo "error: platform must be paper or folia, not '$PLATFORM'" >&2
+        echo "error: platform must be paper, folia or spigot, not '$PLATFORM'" >&2
         exit 2
         ;;
 esac
@@ -38,7 +43,7 @@ MC_VERSION="${1:-1.20.4}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUNDIR="$REPO_ROOT/run"
-# Per platform in the name, so switching between Paper and Folia keeps both cached.
+# Per platform in the name, so switching between platforms keeps each one cached.
 SERVER_JAR="$RUNDIR/$PLATFORM-$MC_VERSION.jar"
 
 cd "$REPO_ROOT"
@@ -66,7 +71,37 @@ mkdir -p "$RUNDIR/plugins"
 # ---------------------------------------------------------------------------
 # Resolve and download the server jar (cached between runs)
 # ---------------------------------------------------------------------------
-if [[ ! -f "$SERVER_JAR" ]]; then
+if [[ ! -f "$SERVER_JAR" && "$PLATFORM" == "spigot" ]]; then
+    # BuildTools clones Spigot's repositories with the system git on Linux and fails a
+    # long way in without it, so check first.
+    if ! command -v git >/dev/null 2>&1; then
+        echo "error: building spigot needs git on PATH" >&2
+        exit 1
+    fi
+    echo "==> Building spigot $MC_VERSION with BuildTools (10-25 minutes on the first run)"
+    BT_JSON="$(curl -fsS --retry 3 --retry-delay 5 -m 60 \
+        'https://hub.spigotmc.org/jenkins/job/BuildTools/lastSuccessfulBuild/api/json?tree=number')"
+    BT_BUILD="$(printf '%s' "$BT_JSON" | grep -oE '"number":[0-9]+' | grep -oE '[0-9]+' || true)"
+    if [[ -z "$BT_BUILD" ]]; then
+        echo "error: could not resolve the latest BuildTools build" >&2
+        exit 1
+    fi
+    BT_DIR="$RUNDIR/buildtools"
+    BT_JAR="$BT_DIR/BuildTools-$BT_BUILD.jar"
+    mkdir -p "$BT_DIR"
+    if [[ ! -f "$BT_JAR" ]]; then
+        curl -fsSL --retry 3 --retry-delay 5 -o "$BT_JAR.tmp" \
+            "https://hub.spigotmc.org/jenkins/job/BuildTools/$BT_BUILD/artifact/target/BuildTools.jar"
+        mv "$BT_JAR.tmp" "$BT_JAR"
+    fi
+    echo "    BuildTools build $BT_BUILD"
+    (cd "$BT_DIR" && java -jar "$BT_JAR" --rev "$MC_VERSION" --compile SPIGOT \
+        --output-dir "$RUNDIR" --final-name "spigot-$MC_VERSION.jar")
+    if [[ ! -f "$SERVER_JAR" ]]; then
+        echo "error: BuildTools finished without producing $SERVER_JAR" >&2
+        exit 1
+    fi
+elif [[ ! -f "$SERVER_JAR" ]]; then
     echo "==> Resolving $PLATFORM $MC_VERSION"
     API="https://fill.papermc.io/v3/projects/$PLATFORM/versions/$MC_VERSION/builds/latest"
     BUILD_JSON="$(curl -fsS --retry 3 --retry-delay 5 -m 60 "$API")"
