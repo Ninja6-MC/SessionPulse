@@ -120,7 +120,9 @@ GitHub Actions (`.github/workflows/release.yml`) will:
    filename so `sha256sum -c` works beside the downloaded jar).
 8. Publish the jar, the checksum and the notes to GitHub Releases, as a pre-release for
    `-alpha`, `-beta` and `-rc` tags and as the latest release for a stable tag.
-9. Publish to Modrinth, then to Paper Hangar (beta, rc and stable only).
+9. Publish to Modrinth and to Paper Hangar (beta, rc and stable only). Once the GitHub
+   release exists the two registries are independent: a Modrinth failure fails the run
+   but does not stop the Hangar step.
 
 **Requires Java 21.** The plugin is built for Java 21 and declares it on Modrinth; every
 server must run on Java 21 or newer to load it, including 1.20.4-1.20.6, which
@@ -144,6 +146,10 @@ Neither is required for a release to succeed. Without them the workflow still te
 builds and publishes to GitHub Releases, and simply skips the registry it has no token
 for. The workflow uses no deployment environment.
 
+Each token reaches only the step that uploads with it. An early step records whether each
+secret is set, without printing it, and the publish steps are gated on that; the tests and
+the Gradle build never see either token.
+
 ### Repository Variables
 
 | Variable | Used by | Default when unset |
@@ -155,17 +161,27 @@ Set them only if a registry project is created under a different slug.
 
 ### When a Registry Step Fails
 
-Publishing is **not atomic**. The GitHub release, the Modrinth upload and the Hangar upload
-are independent steps, and whatever succeeded before a failure stays published. Do not
-re-run the whole job: GitHub Actions cannot re-run a single step, and a registry rejects a
-second upload of a version it already holds. Re-run only the failed step, by hand, with the
-jar and notes already on the GitHub release:
+Publishing is **not atomic**. The GitHub release is created first; after it, the Modrinth
+and Hangar steps are independent of each other, and whatever succeeded stays published.
 
-* **Modrinth:** upload the jar as a new version with the same version number, channel,
-  loaders, game versions and changelog as the workflow uses.
+**Prefer "Re-run failed jobs"** on the failed workflow run. The job runs again from the
+start on a fresh runner: it re-tests and rebuilds the jar there, replaces the jar and
+`.sha256` on the GitHub release with the rebuilt pair, and tries both registries again.
+The registry that succeeded the first time rejects the duplicate version and that step
+fails, so the re-run ends red even when it did its job; read the step results, not the
+run's colour.
+
+If a re-run is not possible, publish the failed registry by hand:
+
+* **Modrinth:** download the jar from the GitHub release and upload it as a new version
+  with the same version number, channel, loaders, game versions and changelog as the
+  workflow uses. This keeps the bytes matching the release's `.sha256`.
 * **Hangar:** from a checkout of the tagged commit, with `HANGAR_API_TOKEN` set and the
   release notes saved as `build/release-notes.md`, run
-  `./gradlew publishPluginPublicationToHangar -PpluginVersion=<version> -PhangarChannel=<Beta|Release>`.
+  `./gradlew publishPluginPublicationToHangar -PpluginVersion=<version> -PhangarChannel=<Beta|Release> -PhangarProject=<HANGAR_PROJECT or SessionPulse>`.
+  The task rebuilds the jar locally, so the bytes uploaded to Hangar will not match the
+  `.sha256` on the GitHub release. Without `build/release-notes.md` the Hangar changelog
+  falls back to "See CHANGELOG.md for this version."
 
 The Minecraft versions declared to both registries are one explicit list, kept in
 `build.gradle.kts` (`releaseGameVersions`) and in `release.yml` (`game-versions`): 1.20.4
