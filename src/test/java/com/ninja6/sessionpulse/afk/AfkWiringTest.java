@@ -65,7 +65,7 @@ class AfkWiringTest {
 
         int listener = onEnable.indexOf("new PlayerActivityListener(afk)");
         int resolve = onEnable.indexOf("afk.resolve()");
-        int tick = onEnable.indexOf("globalRepeating(");
+        int tick = onEnable.indexOf("sessionTick.start()");
         assertTrue(listener >= 0, "onEnable does not register the activity listener");
         assertTrue(resolve > listener,
                 "resolved before the listener exists, an EssentialsX disable in between is missed");

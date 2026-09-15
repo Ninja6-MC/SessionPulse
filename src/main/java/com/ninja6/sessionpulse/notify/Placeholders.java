@@ -7,7 +7,8 @@ import java.util.Objects;
 
 /**
  * The values a configured message may refer to by tag: {@code <player>}, {@code <hours>},
- * {@code <minutes>} and {@code <cooldown>}.
+ * {@code <minutes>} and {@code <cooldown>}; and, for {@code /spulse}'s own lines, {@code <rank>}
+ * and {@code <lifetime>}.
  *
  * <p>Immutable. Every wither returns a new instance and leaves the receiver alone, so
  * {@link #none()} can be shared and one player's name can never end up in another player's
@@ -57,8 +58,7 @@ public final class Placeholders {
      * @return a copy with the value set
      */
     public Placeholders hours(long countedSeconds) {
-        long tenths = Math.max(0, countedSeconds) / 360;
-        return with("hours", tenths / 10 + "." + tenths % 10);
+        return with("hours", tenthsOfHours(countedSeconds));
     }
 
     /**
@@ -82,6 +82,35 @@ public final class Placeholders {
      */
     public Placeholders cooldown(long remainingSeconds) {
         return with("cooldown", Long.toString((Math.max(0, remainingSeconds) + 59) / 60));
+    }
+
+    /**
+     * {@code <rank>}: a leaderboard position, as a plain integer.
+     *
+     * @param rank the position, counted from one
+     * @return a copy with the value set
+     */
+    public Placeholders rank(int rank) {
+        return with("rank", Integer.toString(rank));
+    }
+
+    /**
+     * {@code <lifetime>}: lifetime hours to one decimal place, truncated.
+     *
+     * <p>The same arithmetic as {@link #hours}, for the same two reasons, under its own tag so
+     * one message can show the counted window and the lifetime total side by side.
+     *
+     * @param lifetimeSeconds seconds of lifetime playtime; a negative is treated as zero
+     * @return a copy with the value set
+     */
+    public Placeholders lifetime(long lifetimeSeconds) {
+        return with("lifetime", tenthsOfHours(lifetimeSeconds));
+    }
+
+    /** Hours to one decimal place, truncated, from seconds; a negative is zero. */
+    private static String tenthsOfHours(long seconds) {
+        long tenths = Math.max(0, seconds) / 360;
+        return tenths / 10 + "." + tenths % 10;
     }
 
     /** Every value set, in the order it was set. Unmodifiable. */

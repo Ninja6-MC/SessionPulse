@@ -13,6 +13,7 @@ import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import net.kyori.adventure.title.Title;
 import org.bukkit.NamespacedKey;
 import org.bukkit.Sound;
+import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
 
@@ -91,8 +92,11 @@ public final class Notifier {
     /** Read on every render, never captured, so a reload reaches the prefix. */
     private final Supplier<PluginConfig> config;
 
-    /** Where a player's audience comes from in a test; {@code null} for the real thing. */
-    private final Function<Player, Audience> injectedAudiences;
+    /**
+     * Where a player's or a command sender's audience comes from in a test; {@code null} for
+     * the real thing.
+     */
+    private final Function<CommandSender, Audience> injectedAudiences;
 
     /** {@code null} before {@link #open()} and after {@link #close()}. */
     private volatile BukkitAudiences audiences;
@@ -114,7 +118,7 @@ public final class Notifier {
      * {@link Audience}'s delivery methods are all default methods, so a recording one needs
      * no server. {@link #open()} and {@link #close()} do nothing on it.
      */
-    Notifier(Supplier<PluginConfig> config, Function<Player, Audience> audiences) {
+    Notifier(Supplier<PluginConfig> config, Function<CommandSender, Audience> audiences) {
         this.plugin = null;
         this.config = config;
         this.injectedAudiences = audiences;
@@ -154,6 +158,34 @@ public final class Notifier {
             return;
         }
         Audience audience = audienceFor(player);
+        if (audience != null) {
+            deliverChat(audience, miniMessage, placeholders);
+        }
+    }
+
+    /**
+     * A reply to whoever ran a command: a chat line, with the configured prefix, to a player
+     * or to the console alike.
+     *
+     * <p>No entity hop, and none is needed. A command already runs where its sender may be
+     * touched: a player's on that player's own region thread, the console's on the global
+     * region. A player goes through {@link #chat}, so there is one route to a player's chat
+     * whatever asked for it; any other sender goes through the audience provider's
+     * {@code sender} lookup. Does nothing before {@link #open()} and after {@link #close()}.
+     *
+     * @param sender       who ran the command; call on the thread the command runs on
+     * @param miniMessage  the reply, or {@code null} to send nothing
+     * @param placeholders values for the reply and the prefix
+     */
+    public void send(CommandSender sender, String miniMessage, Placeholders placeholders) {
+        if (sender instanceof Player player) {
+            chat(player, miniMessage, placeholders);
+            return;
+        }
+        if (miniMessage == null) {
+            return;
+        }
+        Audience audience = senderAudience(sender);
         if (audience != null) {
             deliverChat(audience, miniMessage, placeholders);
         }
@@ -379,6 +411,14 @@ public final class Notifier {
         }
         BukkitAudiences open = audiences;
         return open == null ? null : open.player(player);
+    }
+
+    private Audience senderAudience(CommandSender sender) {
+        if (injectedAudiences != null) {
+            return injectedAudiences.apply(sender);
+        }
+        BukkitAudiences open = audiences;
+        return open == null ? null : open.sender(sender);
     }
 
     private Audience consoleAudience() {

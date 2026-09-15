@@ -89,3 +89,12 @@ adheres to [Semantic Versioning](https://semver.org/).
   playtime is kept. A reload that turns enforcement on applies on the next tick, and with
   enforcement off the login gate admits everyone. Players holding `sessionpulse.exempt`
   are never disconnected.
+- `/spulse time`, `top`, `reset` and `reload`, with tab completion. `time` shows a player
+  their own counted window and lifetime playtime; with `sessionpulse.admin` it takes any
+  name, online or offline, and an offline window that the next join would reset is shown
+  as zero. `top` ranks the ten longest lifetimes, online players included. `reset` clears a
+  player's counted window and any cooldown, online or offline, keeping lifetime and
+  last-seen, so milestones fire again as the new window crosses them. `reload` re-reads
+  `config.yml`, reschedules the flush and the session tick by their own handles, and
+  leaves the configuration in force if the file does not parse. Completion offers only
+  what the sender may run, and only the online names they can see.

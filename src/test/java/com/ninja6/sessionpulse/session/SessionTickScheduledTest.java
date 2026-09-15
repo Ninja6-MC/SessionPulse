@@ -45,7 +45,7 @@ class SessionTickScheduledTest {
 
         assertEquals(1, callSites,
                 "Expected exactly one globalRepeating() call site outside platform/, the "
-                        + "session tick in SessionPulsePlugin#onEnable. Zero means a plugin "
+                        + "session tick in SessionTickSchedule, which onEnable starts. Zero means a plugin "
                         + "that never counts, which every other test in this issue would "
                         + "still pass. Found:" + where);
     }

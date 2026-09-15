@@ -52,7 +52,8 @@ public final class AfkService implements AfkGate {
     private final Supplier<PluginConfig> config;
 
     /**
-     * volatile: published by {@link #resolve()} on the main or console thread, read by the
+     * volatile: published by {@link #resolve()} on the main thread, or by a reload on the
+     * console's global region or a player's own region thread on Folia; read by the
      * session tick on the global region.
      */
     private volatile AfkDetector current = NoOpAfkDetector.INSTANCE;
