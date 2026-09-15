@@ -45,14 +45,12 @@ jobs:
     permissions:
       contents: write
 
-    # Declared at job level, not on the steps: only job-level and workflow-level env is
-    # reliably visible to a step's own `if`, and these decide whether each registry is
-    # published to at all. Secrets cannot be read directly in an `if`. Both are optional;
-    # absent, the matching step is skipped and the GitHub release still happens.
-    # HANGAR_API_TOKEN doubles as the credential the Hangar Gradle plugin reads.
-    env:
-      MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
-      HANGAR_API_TOKEN: ${{ secrets.HANGAR_API_TOKEN }}
+    # No job-level env carrying the registry tokens, unlike SpiralGenesis. Job-level env is
+    # exported into EVERY step - the Gradle build and tests included, which execute code
+    # and third-party plugins from this repository's dependency graph - so a token placed
+    # there is readable by far more than the one step that uploads with it. The `tokens`
+    # step below records only whether each secret is set, and each secret is then passed to
+    # its own publish step and nowhere else.
 
     steps:
       # First, so a malformed tag fails in seconds rather than after a toolchain setup. The
@@ -75,6 +73,25 @@ jobs:
             exit 1
           fi
           echo "Tag '$GITHUB_REF_NAME' is valid."
+
+      # Which registries this run can publish to. Secrets cannot be read in an `if`, so this
+      # step maps them into its OWN env - visible to this script only - and writes back a
+      # plain true/false per registry. The values are tested for emptiness and never printed
+      # or written anywhere. Both tokens are optional: absent, the matching publish step is
+      # skipped and the GitHub release still happens.
+      - name: Detect Registry Tokens
+        id: tokens
+        env:
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+          HANGAR_API_TOKEN: ${{ secrets.HANGAR_API_TOKEN }}
+        run: |
+          if [ -n "$MODRINTH_TOKEN" ]; then MODRINTH=true; else MODRINTH=false; fi
+          if [ -n "$HANGAR_API_TOKEN" ]; then HANGAR=true; else HANGAR=false; fi
+          {
+            echo "modrinth=$MODRINTH"
+            echo "hangar=$HANGAR"
+          } >> "$GITHUB_OUTPUT"
+          echo "Modrinth token configured: $MODRINTH; Hangar token configured: $HANGAR"
 
       # Full history, because the next step needs main's history to compare against.
       - name: Checkout Code
@@ -277,8 +294,10 @@ jobs:
       # The GitHub release is created first and is the one destination that is always
       # published. Its body is CHANGELOG.md's text, never GitHub's generated notes, which
       # would list squash-merge titles instead. The default github.token is used; it has
-      # contents: write from the job's permissions above.
+      # contents: write from the job's permissions above. The id is what the Hangar step
+      # checks, so that step can still run after a Modrinth failure.
       - name: Create GitHub Release
+        id: github-release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ steps.vars.outputs.tag }}
@@ -293,14 +312,23 @@ jobs:
             build/libs/${{ steps.vars.outputs.jar }}
             build/libs/${{ steps.vars.outputs.jar }}.sha256
 
-      # Registry publishing is NOT atomic. The GitHub release above and each step below are
-      # independent; if one fails, whatever ran before it stays published. Do not re-run the
-      # whole job after a partial publish - Actions cannot re-run a single step, and a second
-      # upload of a version a registry already holds is rejected. Re-run only the failed
-      # step, by hand, with the same jar and notes; RELEASE_PROCESS.md says how.
+      # Registry publishing is NOT atomic. Once the GitHub release exists, Modrinth and Hangar
+      # are independent of each other: a Modrinth failure fails the job but does not skip
+      # Hangar (see its `if`), and whatever succeeded stays published. Recovery is in
+      # RELEASE_PROCESS.md; a registry rejects a second upload of a version it already holds,
+      # so a re-run fails on the registry that succeeded and publishes the one that did not.
       #
       # The project slug is a repository variable so a registry project can be created under
       # a different slug without editing this file; the default is the expected one.
+      #
+      # The token is passed as this step's input and nowhere else in the job.
+      #
+      # modrinth-featured false and modrinth-unfeature-mode none, because featuring is a
+      # manual decision taken on Modrinth after a stable release (RELEASE_PROCESS.md).
+      # mc-publish's defaults would otherwise decide it on every run: its featured default
+      # features a new version, and its default unfeature mode un-features older versions
+      # whose game versions and loaders fall within this one's - which, with one fixed list,
+      # is every earlier release, including the one a maintainer featured by hand.
       #
       # game-versions is explicit and matches releaseGameVersions in build.gradle.kts entry
       # for entry - edit both together. No `1.20.x` or `1.21.x`: the first would claim
@@ -308,11 +336,14 @@ jobs:
       # itself whenever the registry learns a new version, which is a compatibility claim
       # nobody reviewed. 26.x is deliberately absent; see the note on releaseGameVersions.
       - name: Publish to Modrinth
-        if: env.MODRINTH_TOKEN != ''
+        id: modrinth
+        if: steps.tokens.outputs.modrinth == 'true'
         uses: Kira-NT/mc-publish@52307b03863581dec6b652b83e597aec02ebb075 # v3.3.1
         with:
           modrinth-id: ${{ vars.MODRINTH_PROJECT || 'sessionpulse' }}
-          modrinth-token: ${{ env.MODRINTH_TOKEN }}
+          modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
+          modrinth-featured: false
+          modrinth-unfeature-mode: none
           name: SessionPulse ${{ steps.vars.outputs.version }}
           version: ${{ steps.vars.outputs.version }}
           version-type: ${{ steps.vars.outputs.channel }}
@@ -343,12 +374,26 @@ jobs:
             1.21.11
           java: 21
 
-      # Skipped for alpha tags (empty hangarChannel) as well as without a token. The publish
-      # task depends on shadowJar and is passed the same -PpluginVersion, so it reuses the
-      # jar built and checksummed above rather than producing a different one.
+      # Skipped for alpha tags (empty hangarChannel) as well as without a token.
+      #
+      # `!cancelled()` replaces the implicit `success()`, which would skip this step whenever
+      # any earlier step failed - Modrinth included. The GitHub release outcome is then
+      # checked explicitly, so a failure anywhere up to and including the GitHub release (tag
+      # validation, tests, the jar, the checksum) still stops Hangar: those steps all run
+      # before it, and a failure in any of them skips the release step, whose outcome is then
+      # not 'success'.
+      #
+      # HANGAR_API_TOKEN is in this step's env only; the Gradle plugin reads it from there.
+      # The publish task depends on shadowJar and is passed the same -PpluginVersion, so it
+      # reuses the jar built and checksummed above rather than producing a different one.
       - name: Publish to Hangar
-        if: env.HANGAR_API_TOKEN != '' && steps.vars.outputs.hangarChannel != ''
+        if: >-
+          !cancelled()
+          && steps.github-release.outcome == 'success'
+          && steps.tokens.outputs.hangar == 'true'
+          && steps.vars.outputs.hangarChannel != ''
         env:
+          HANGAR_API_TOKEN: ${{ secrets.HANGAR_API_TOKEN }}
           VERSION: ${{ steps.vars.outputs.version }}
           HANGAR_CHANNEL: ${{ steps.vars.outputs.hangarChannel }}
           HANGAR_PROJECT: ${{ vars.HANGAR_PROJECT || 'SessionPulse' }}
