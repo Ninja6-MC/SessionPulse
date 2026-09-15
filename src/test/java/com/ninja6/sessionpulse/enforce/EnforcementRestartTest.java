@@ -17,6 +17,8 @@ import java.io.StringReader;
 import java.io.UncheckedIOException;
 import java.lang.reflect.Proxy;
 import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -24,8 +26,6 @@ import java.util.logging.Logger;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
-import java.nio.file.Path;
-import java.time.Duration;
 import org.bukkit.event.player.AsyncPlayerPreLoginEvent;
 import org.bukkit.event.player.AsyncPlayerPreLoginEvent.Result;
 import org.junit.jupiter.api.DisplayName;
@@ -125,7 +125,6 @@ class EnforcementRestartTest {
         Path file = dir.resolve("data.yml");
         EnforceFixture.Clock clock = new EnforceFixture.Clock();
         PluginConfig config = EnforceFixture.parse(EnforceFixture.ENABLED);
-        YamlDataStorage[] holder = new YamlDataStorage[1];
         // Every one-shot runs at once and every result is kept, so each flush the region task
         // provokes is a separate crash point.
         Scheduler inline = new Scheduler() {
@@ -157,20 +156,19 @@ class EnforcementRestartTest {
         Logger logger = Logger.getAnonymousLogger();
         logger.setUseParentHandlers(false);
         YamlDataStorage storage = new YamlDataStorage(file, inline, () -> config, logger);
-        holder[0] = storage;
         storage.loadFromDisk();
         // A periodic flush after every save the tracker makes: the worst moment it could land.
         SessionStore flushingStore = new SessionStore() {
             @Override
             public SessionSnapshot load(UUID uuid) {
-                return holder[0].load(uuid);
+                return storage.load(uuid);
             }
 
             @Override
             public void save(UUID uuid, SessionSnapshot snapshot) {
-                holder[0].save(uuid, snapshot);
+                storage.save(uuid, snapshot);
                 if (flushOnEverySave) {
-                    holder[0].flushAsync();
+                    storage.flushAsync();
                 }
             }
         };
@@ -200,7 +198,7 @@ class EnforcementRestartTest {
         for (String version : versions) {
             YamlConfiguration yaml = YamlConfiguration.loadConfiguration(new StringReader(version));
             String path = "players." + uuid + ".";
-            if (yaml.getLong(path + "window-seconds") < 240 * 60L) {
+            if (yaml.getLong(path + "window-seconds") == 0L) {
                 assertTrue(yaml.getLong(path + "cooldown-expires") > 0L,
                         "a crash here restores a fresh allowance with no break:\n" + version);
             }

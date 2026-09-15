@@ -30,7 +30,7 @@ import java.util.function.Supplier;
  * players already outside it; the cooldowns stay on record and do nothing.
  *
  * <p>The refusal is the kick message again. {@code <cooldown>} is the time left;
- * {@code <hours>} and {@code <minutes>} are {@code at-minutes}, the limit that was reached,
+ * {@code <hours>} and {@code <minutes>} are {@code at-minutes}, the limit in force,
  * because the stored window has been reset to zero by then and would read as nothing.
  *
  * <p>There is no {@code sessionpulse.exempt} check, because there is no player to ask before
