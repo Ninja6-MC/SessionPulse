@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 #
-# Boots a throwaway Paper or Folia server with the built plugin installed, waits for
-# startup to complete, then shuts it down and asserts the plugin loaded, enabled and
+# Boots a throwaway Paper, Folia or Spigot server with the built plugin installed, waits
+# for startup to complete, then shuts it down and asserts the plugin loaded, enabled and
 # disabled cleanly - and that the shaded dependencies were really relocated. With BOT_JAR
 # set it also plays a scripted session in between: a real protocol client joins, receives
 # a milestone, is kicked by enforcement, is refused at login during the cooldown, and is
 # let back in once the cooldown lapses.
 #
-# Usage: [BOT_JAR=<path>] smoke-test.sh <paper|folia> <mc-version> <path-to-plugin-jar>
+# Usage: [BOT_JAR=<path>] [SPIGOT_JAR=<path>] smoke-test.sh <paper|folia|spigot> <mc-version> <path-to-plugin-jar>
+#
+# Paper and Folia are downloaded from PaperMC's fill API. Spigot publishes no server jar,
+# so for spigot SPIGOT_JAR must name one BuildTools already built; this script never runs
+# BuildTools itself. CI builds and caches it, and BUILDTOOLS_BUILD only labels the run.
 #
 # Without BOT_JAR: no gameplay. Nothing joins, nothing is generated, no command is run.
 # That is the boot test the scheduler issue introduced - does a jar carrying a relocated
@@ -34,9 +38,17 @@
 
 set -euo pipefail
 
-PLATFORM="${1:?usage: smoke-test.sh <paper|folia> <mc-version> <plugin-jar>}"
+PLATFORM="${1:?usage: smoke-test.sh <paper|folia|spigot> <mc-version> <plugin-jar>}"
 MC_VERSION="${2:?missing minecraft version}"
 PLUGIN_JAR="${3:?missing plugin jar path}"
+
+case "$PLATFORM" in
+    paper | folia | spigot) ;;
+    *)
+        echo "::error::Platform must be paper, folia or spigot, not '$PLATFORM'."
+        exit 1
+        ;;
+esac
 
 BOOT_TIMEOUT="${BOOT_TIMEOUT:-300}"
 STOP_TIMEOUT="${STOP_TIMEOUT:-90}"
@@ -50,6 +62,15 @@ fi
 # Resolve before the cd below, or a relative path stops pointing at the jar. CI passes
 # this straight out of `find`, which is relative.
 PLUGIN_JAR="$(realpath "$PLUGIN_JAR")"
+
+SPIGOT_JAR="${SPIGOT_JAR:-}"
+if [[ "$PLATFORM" == "spigot" ]]; then
+    if [[ -z "$SPIGOT_JAR" || ! -f "$SPIGOT_JAR" ]]; then
+        echo "::error::Platform spigot needs SPIGOT_JAR naming a BuildTools-built server jar; got '$SPIGOT_JAR'."
+        exit 1
+    fi
+    SPIGOT_JAR="$(realpath "$SPIGOT_JAR")"
+fi
 
 BOT_JAR="${BOT_JAR:-}"
 if [[ -n "$BOT_JAR" ]]; then
@@ -73,34 +94,43 @@ cd "$WORKDIR"
 # ---------------------------------------------------------------------------
 # Resolve and verify the server jar
 # ---------------------------------------------------------------------------
-API="https://fill.papermc.io/v3/projects/$PLATFORM/versions/$MC_VERSION/builds/latest"
-echo "Resolving $PLATFORM $MC_VERSION from $API"
+if [[ "$PLATFORM" != "spigot" ]]; then
+    API="https://fill.papermc.io/v3/projects/$PLATFORM/versions/$MC_VERSION/builds/latest"
+    echo "Resolving $PLATFORM $MC_VERSION from $API"
 
-BUILD_JSON="$(curl -fsS --retry 3 --retry-delay 5 -m 60 "$API")"
+    BUILD_JSON="$(curl -fsS --retry 3 --retry-delay 5 -m 60 "$API")"
 
-# Parsed with shell builtins rather than jq so this script also runs on a developer
-# machine, where jq is often absent - it is absent on the maintainer's. Everything before
-# "server:default" is dropped, which discards the Mojang-mapped download that would
-# otherwise match these patterns first.
-SEGMENT="${BUILD_JSON#*\"server:default\":}"
-JAR_URL="$(printf '%s' "$SEGMENT" | grep -oE 'https://[^"]+' | head -1)"
-JAR_SHA="$(printf '%s' "$SEGMENT" | grep -oE '"sha256":"[a-f0-9]{64}"' | head -1 \
-    | grep -oE '[a-f0-9]{64}')"
-BUILD_ID="$(printf '%s' "$BUILD_JSON" | grep -oE '"id":[0-9]+' | head -1 | grep -oE '[0-9]+')"
-CHANNEL="$(printf '%s' "$BUILD_JSON" | grep -oE '"channel":"[A-Z]+"' | head -1 \
-    | sed 's/.*:"//; s/"//')"
+    # Parsed with shell builtins rather than jq so this script also runs on a developer
+    # machine, where jq is often absent - it is absent on the maintainer's. Everything
+    # before "server:default" is dropped, which discards the Mojang-mapped download that
+    # would otherwise match these patterns first.
+    SEGMENT="${BUILD_JSON#*\"server:default\":}"
+    JAR_URL="$(printf '%s' "$SEGMENT" | grep -oE 'https://[^"]+' | head -1)"
+    JAR_SHA="$(printf '%s' "$SEGMENT" | grep -oE '"sha256":"[a-f0-9]{64}"' | head -1 \
+        | grep -oE '[a-f0-9]{64}')"
+    BUILD_ID="$(printf '%s' "$BUILD_JSON" | grep -oE '"id":[0-9]+' | head -1 | grep -oE '[0-9]+')"
+    CHANNEL="$(printf '%s' "$BUILD_JSON" | grep -oE '"channel":"[A-Z]+"' | head -1 \
+        | sed 's/.*:"//; s/"//')"
 
-if [[ -z "$JAR_URL" || "$JAR_URL" == "null" ]]; then
-    echo "::error::Could not resolve a download URL for $PLATFORM $MC_VERSION"
-    exit 1
+    if [[ -z "$JAR_URL" || "$JAR_URL" == "null" ]]; then
+        echo "::error::Could not resolve a download URL for $PLATFORM $MC_VERSION"
+        exit 1
+    fi
+
+    echo "Using $PLATFORM build $BUILD_ID ($CHANNEL)"
+    curl -fsSL --retry 3 --retry-delay 5 -o server.jar "$JAR_URL"
+
+    # The jar is downloaded and then executed, so verify it against the checksum the API
+    # published rather than trusting the transfer.
+    echo "$JAR_SHA  server.jar" | sha256sum -c -
+else
+    # No checksum: BuildTools compiled this jar on the same runner from Spigot's own
+    # repositories, so there is no published digest to compare it with.
+    BUILD_ID="buildtools-${BUILDTOOLS_BUILD:-unknown}"
+    CHANNEL="local"
+    echo "Using $PLATFORM $MC_VERSION from $SPIGOT_JAR ($BUILD_ID, $CHANNEL)"
+    cp "$SPIGOT_JAR" server.jar
 fi
-
-echo "Using $PLATFORM build $BUILD_ID ($CHANNEL)"
-curl -fsSL --retry 3 --retry-delay 5 -o server.jar "$JAR_URL"
-
-# The jar is downloaded and then executed, so verify it against the checksum the API
-# published rather than trusting the transfer.
-echo "$JAR_SHA  server.jar" | sha256sum -c -
 
 # ---------------------------------------------------------------------------
 # Minimal server configuration
@@ -145,6 +175,10 @@ echo "Installed plugin: $(basename "$PLUGIN_JAR")"
 #   - enforcement at minute 3, cooldown 1. Enforcement kicks on the first 20-tick check
 #     at or past at-minutes, with no grace, and <cooldown> renders as whole minutes
 #     rounded up - so the kick and the login refusal both read exactly "SP-SMOKE-KICK 1".
+#     Coloured, so the message really leaves the plugin as legacy section-sign codes and
+#     the server has to parse them back into a styled component; an uncoloured message
+#     would pass even if nothing parsed it. Spigot's login refusal is the one exception,
+#     see LOGIN_REFUSAL below.
 #   - afk.mode OFF, quoted: the bot stands still, and AUTO would pause its counted window
 #     and push every deadline out. Unquoted, YAML reads OFF as boolean false.
 #   - window-reset-hours 1 is the minimum and far longer than the run, so the window never
@@ -172,7 +206,7 @@ enforcement:
   enabled: true
   at-minutes: 3
   cooldown-minutes: 1
-  kick-message: "SP-SMOKE-KICK <cooldown>"
+  kick-message: "<red>SP-SMOKE-KICK <cooldown></red>"
 YAML
     echo "Wrote smoke config."
 fi
@@ -191,7 +225,14 @@ mkfifo stdin.pipe
 # change here can only be verified by pushing. Two things matter: install a Linux JDK
 # inside the distribution rather than reaching for the Windows one, and keep WORKDIR on
 # the distribution's own filesystem, because mkfifo does not work under /mnt.
-java -Xms1G -Xmx2G -jar server.jar --nogui < stdin.pipe > server.log 2>&1 &
+#
+# Spigot always gets -DIReallyKnowWhatIAmDoingISwear. A Spigot build that believes itself
+# outdated sleeps 20 seconds at startup, and the cached jar ages daily until the next
+# BuildTools build replaces it, so without the flag the boot would slow down as the cache
+# got older.
+SERVER_JVM_ARGS=(-Xms1G -Xmx2G)
+[[ "$PLATFORM" != "spigot" ]] || SERVER_JVM_ARGS+=(-DIReallyKnowWhatIAmDoingISwear)
+java "${SERVER_JVM_ARGS[@]}" -jar server.jar --nogui < stdin.pipe > server.log 2>&1 &
 SERVER_PID=$!
 
 # Holding the write end open keeps the server's stdin from seeing EOF immediately.
@@ -245,7 +286,20 @@ BOT_RUNS=0
 
 # Whole-line, fixed-string. A substring match would accept "SP-SMOKE-KICK 10" as the kick
 # or a line still carrying markup around the marker.
-bot_has() { grep -qxF "$2" "$1" 2>/dev/null; }
+bot_has() { LC_ALL=C grep -qxF "$2" "$1" 2>/dev/null; }
+
+# The section sign as the two UTF-8 bytes the bot prints, spelled as escapes so no editor
+# or locale can change what the file holds. Matched with LC_ALL=C, as bytes.
+SECTION=$'\xc2\xa7'
+
+# The cooldown's login refusal, as the bot must log it. Upstream CraftBukkit wraps a
+# pre-login refusal string in Component.literal() instead of parsing it, so on Spigot
+# alone the legacy codes arrive as literal text - which the vanilla client still renders
+# as colour, so a player sees red. Paper and Folia parse the string into a styled
+# component, which the bot flattens to the bare text. The game-phase kick goes through
+# kickPlayer(String), which all three parse, so it has one expected line everywhere.
+LOGIN_REFUSAL="BOT disconnect phase=login reason=SP-SMOKE-KICK 1"
+[[ "$PLATFORM" != "spigot" ]] || LOGIN_REFUSAL="BOT disconnect phase=login reason=${SECTION}cSP-SMOKE-KICK 1"
 
 # Occurrences of a fixed string in the server log, as a comparison. grep -c prints 0 and
 # exits 1 on no match, hence the `|| true`.
@@ -274,7 +328,9 @@ bot_exited() { ! kill -0 "$BOT_PID" 2>/dev/null; }
 start_bot() {
     BOT_RUNS=$((BOT_RUNS + 1))
     echo "Starting bot run $BOT_RUNS for up to ${1}s"
-    java -jar "$BOT_JAR" 127.0.0.1 25565 "$BOT_NAME" "$1" > "bot-$BOT_RUNS.log" 2>&1 &
+    # stdout forced to UTF-8, so a section sign the bot received is written as the bytes
+    # the checks look for whatever the runner's locale.
+    java -Dstdout.encoding=UTF-8 -jar "$BOT_JAR" 127.0.0.1 25565 "$BOT_NAME" "$1" > "bot-$BOT_RUNS.log" 2>&1 &
     BOT_PID=$!
 }
 
@@ -352,8 +408,9 @@ smoke_gameplay() {
     # The bot exits on its own after 30s whatever happens, so failing this means the
     # process hung, not that the login was let through; the next two checks decide that.
     finish_bot 60 || { fail "Bot run 3 hung - the process did not exit within 60s."; return; }
-    bot_has "$log" "BOT disconnect phase=login reason=SP-SMOKE-KICK 1" \
-        || { fail "The cooldown did not refuse the login with 'SP-SMOKE-KICK 1' - see $log."; return; }
+    # Carries the section sign on Spigot only - see where LOGIN_REFUSAL is set.
+    bot_has "$log" "$LOGIN_REFUSAL" \
+        || { fail "The cooldown did not refuse the login with '$LOGIN_REFUSAL' - see $log."; return; }
     ! bot_has "$log" "BOT joined" \
         || { fail "Bot run 3 joined during the cooldown."; return; }
     echo "Cooldown refused the login."
@@ -452,6 +509,13 @@ grep -q 'Legacy serializer' server.log \
 ! grep -qE 'Legacy serializer.*</' server.log \
     || fail "The legacy render still carries MiniMessage markup - it was logged unrendered."
 
+# A Paper jar copied into SPIGOT_JAR by mistake would otherwise pass as the Spigot leg.
+# CraftBukkit's version line names the Spigot build; Paper's does not.
+if [[ "$PLATFORM" == "spigot" ]]; then
+    grep -q -- '-Spigot-' server.log \
+        || fail "server.log does not identify a Spigot server - SPIGOT_JAR is not a Spigot build."
+fi
+
 # Folia refuses a plugin without folia-supported and says exactly this.
 ! grep -qi 'not marked as supporting Folia' server.log \
     || fail "Server rejected the plugin as not Folia-compatible."
@@ -523,10 +587,19 @@ if [[ -n "$BOT_JAR" ]]; then
     grep -qE '^[[:space:]]*cooldown-expires:[[:space:]]*[1-9][0-9]*[[:space:]]*$' plugins/SessionPulse/data.yml 2>/dev/null \
         || fail "data.yml carries no non-zero cooldown-expires - the enforcement cooldown was not persisted."
 
-    # Rendered, never raw. One grep over the bot logs, not a pipe, for the same pipefail
-    # reason as the legacy-serializer check above.
-    ! grep -hE '^BOT .*(<aqua>|</)' bot-*.log 2>/dev/null \
-        || fail "A bot received text still carrying MiniMessage markup - it was sent unrendered."
+    # Rendered, never raw: no MiniMessage tag and no section sign in any text the bot
+    # received. Only the text events are read; a `closed` line repeats the transport's own
+    # reason. The Spigot login refusal is exempt, as one exact line, for the reason given
+    # where LOGIN_REFUSAL is set - step 3 already matched it whole.
+    #
+    # Captured into variables and grepped once each rather than piped, for the same
+    # pipefail reason as the legacy-serializer check above.
+    BOT_TEXT="$(LC_ALL=C grep -hE '^BOT (chat|actionbar|title|subtitle|disconnect) ' bot-*.log 2>/dev/null || true)"
+    if [[ "$PLATFORM" == "spigot" ]]; then
+        BOT_TEXT="$(LC_ALL=C grep -vxF "$LOGIN_REFUSAL" <<<"$BOT_TEXT" || true)"
+    fi
+    ! LC_ALL=C grep -E "(<[a-z/#]|$SECTION)" <<<"$BOT_TEXT" \
+        || fail "A bot received text still carrying MiniMessage markup or a section sign - it was sent unrendered."
 
     # Event and scheduler failures that only a joined player can trigger.
     ! grep -qE 'Could not pass event|Task generated an exception|Exception in region thread' server.log \

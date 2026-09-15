@@ -135,17 +135,21 @@ jobs:
     # 35 rather than 25 since the bot legs: the scripted session is about seven minutes of
     # wall clock on top of the boot, plus a cold Gradle build of the bot fixture, and a
     # stop that has to fall through to the kill still needs room to upload the logs.
-    timeout-minutes: 35
+    #
+    # 60 for spigot: on a cold cache BuildTools runs first, 10-25 minutes before the same
+    # session is played on top of it. A warm cache costs the spigot leg nothing extra.
+    timeout-minutes: ${{ matrix.platform == 'spigot' && 60 || 35 }}
 
     strategy:
-      # Paper and Folia fail for different reasons, and seeing both results is the point.
+      # Paper, Folia and Spigot fail for different reasons, and seeing every result is the
+      # point.
       fail-fast: false
       matrix:
-        # Spigot is absent and that is not an oversight. Spigot publishes no server jar -
-        # BuildTools is the only route, it takes 10-25 minutes and 2GB, and its output may
-        # not be redistributed or cached publicly. The Spigot boot is a manual gate before
-        # merge, and whether it can become a CI leg at all is the smoke-test issue's
-        # question.
+        # Spigot publishes no server jar and its output may not be redistributed, so the
+        # spigot leg builds its own with BuildTools on the runner - 10-25 minutes and 2GB -
+        # and keeps it in this repository's Actions cache, which is not a public download.
+        # One spigot leg only, at 1.21.11, because that is where the bot runs: a 1.20.4
+        # leg would be a second BuildTools build to prove a boot alone.
         #
         # Two Minecraft versions rather than one, because adventure-platform-bukkit's
         # CraftBukkitFacet reflects into version-specific server internals: the 1.20.4 pair
@@ -185,6 +189,11 @@ jobs:
             bot: true
           - label: 'folia 1.21.11'
             platform: folia
+            minecraft: '1.21.11'
+            java: '21'
+            bot: true
+          - label: 'spigot 1.21.11'
+            platform: spigot
             minecraft: '1.21.11'
             java: '21'
             bot: true
@@ -244,6 +253,79 @@ jobs:
           java-version: ${{ matrix.java }}
           distribution: 'temurin'
 
+      # The spigot leg's server jar, from the cache when it can be. Restore and save are two
+      # steps rather than actions/cache, which saves only when the whole job succeeds: a
+      # red smoke test would then throw away a good 20-minute build and pay for it again
+      # on the fix.
+      #
+      # The key is the BuildTools Jenkins build, so a new BuildTools release - roughly
+      # weekly - costs one cold run. It does NOT track Spigot's own 1.21.11 refs, so a
+      # Spigot fix pushed under an unchanged BuildTools build is not picked up until the
+      # next one; for a smoke test that is acceptable.
+      #
+      # Two limits on how warm the cache really is. A cache saved from a pull_request run
+      # is scoped to that pull request's ref, so only a push to main produces one that
+      # every branch can read. And cancel-in-progress above can kill a cold run while
+      # BuildTools is still going, before the save, so a quick second push to a branch
+      # starts cold again.
+      #
+      # The lookup failing does not fail the leg. Without a build number the restore falls
+      # back to the newest jar under the prefix, and BuildTools runs only if there is none.
+      - name: Resolve BuildTools Build
+        id: buildtools
+        if: matrix.platform == 'spigot'
+        run: |
+          JSON="$(curl -fsS --retry 3 --retry-delay 5 -m 60 \
+            'https://hub.spigotmc.org/jenkins/job/BuildTools/lastSuccessfulBuild/api/json?tree=number' || true)"
+          BUILD="$(printf '%s' "$JSON" | grep -oE '"number":[0-9]+' | grep -oE '[0-9]+' || true)"
+          if [ -z "$BUILD" ]; then
+            echo "::warning::Could not resolve the BuildTools build; falling back to any cached Spigot jar."
+          fi
+          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Spigot Jar
+        id: spigot-cache
+        if: matrix.platform == 'spigot'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/spigot-jar/spigot-${{ matrix.minecraft }}.jar
+          key: spigot-${{ matrix.minecraft }}-buildtools-${{ steps.buildtools.outputs.build || 'unresolved' }}
+          # Exact key only while the build number is known, so a new BuildTools build
+          # really does rebuild; the prefix is the fallback for a failed lookup.
+          restore-keys: ${{ steps.buildtools.outputs.build == '' && format('spigot-{0}-buildtools-', matrix.minecraft) || '' }}
+
+      # cache-matched-key is empty only when nothing was restored, exact or by prefix.
+      # Without a resolved build number this takes BuildTools from lastSuccessfulBuild, and
+      # if Jenkins is down that fails here - the one case with no jar to test.
+      - name: Build Spigot with BuildTools
+        id: buildtools-run
+        if: matrix.platform == 'spigot' && steps.spigot-cache.outputs.cache-matched-key == ''
+        timeout-minutes: 30
+        env:
+          BUILD: ${{ steps.buildtools.outputs.build }}
+          MC_VERSION: ${{ matrix.minecraft }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/buildtools" "$RUNNER_TEMP/spigot-jar"
+          cd "$RUNNER_TEMP/buildtools"
+          curl -fsSL --retry 3 --retry-delay 5 -o BuildTools.jar \
+            "https://hub.spigotmc.org/jenkins/job/BuildTools/${BUILD:-lastSuccessfulBuild}/artifact/target/BuildTools.jar"
+          java -jar BuildTools.jar --rev "$MC_VERSION" --compile SPIGOT \
+            --output-dir "$RUNNER_TEMP/spigot-jar" --final-name "spigot-$MC_VERSION.jar"
+          test -f "$RUNNER_TEMP/spigot-jar/spigot-$MC_VERSION.jar"
+          # About 2GB of checkouts and Maven output that nothing after this reads.
+          cd "$RUNNER_TEMP"
+          rm -rf "$RUNNER_TEMP/buildtools"
+
+      # Before the smoke test, so a red run still keeps the build. Not under the
+      # `unresolved` key: that jar's BuildTools build is unknown, and naming it would let
+      # the prefix fallback prefer it over a correctly keyed one.
+      - name: Save Spigot Jar
+        if: steps.buildtools-run.outcome == 'success' && steps.buildtools.outputs.build != ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/spigot-jar/spigot-${{ matrix.minecraft }}.jar
+          key: spigot-${{ matrix.minecraft }}-buildtools-${{ steps.buildtools.outputs.build }}
+
       # The jar the build job already produced, rather than a second build. This is the
       # artifact a release would ship, so it is the one that has to boot.
       - name: Download Plugin Artifact
@@ -253,6 +335,10 @@ jobs:
           path: dist
 
       - name: Boot Server and Run Smoke Test
+        # Empty on the Paper and Folia legs, which resolve their own jar.
+        env:
+          SPIGOT_JAR: ${{ matrix.platform == 'spigot' && format('{0}/spigot-jar/spigot-{1}.jar', runner.temp, matrix.minecraft) || '' }}
+          BUILDTOOLS_BUILD: ${{ steps.buildtools.outputs.build }}
         run: |
           chmod +x .github/scripts/smoke-test.sh
           # The upload step's denylist already excludes the thin, sources and javadoc
