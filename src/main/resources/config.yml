@@ -147,10 +147,15 @@ enforcement:
   # Adventure, so this is rendered through the legacy serializer: gradients and
   # hover events will not survive, plain colours will. An unusable one falls
   # back to the built-in default rather than disconnecting somebody with a
-  # blank screen.
+  # blank screen. The same text refuses a rejoin during the cooldown. It takes
+  # <player>, <hours>, <minutes> and <cooldown>, the minutes left before the
+  # player may rejoin, rounded up. On the disconnect screen <hours> and
+  # <minutes> are the counted window that was reached; on the rejoin screen they
+  # are at-minutes, because the disconnect reset the window.
   kick-message: "<yellow>Time for a break.</yellow>"
-  # Minutes before the player may rejoin. Clamped to 1-1440. A 0 is not "no
-  # cooldown": the player would reconnect still over the limit and be kicked
-  # again, which is a boot loop. Set `enabled: false` to disable enforcement.
+  # Minutes before the player may rejoin. Clamped to 1-1440. The disconnect
+  # resets the counted window, so this is the whole of the enforced break: after
+  # it the player starts a fresh at-minutes. A 0 would be no break at all. Set
+  # `enabled: false` to disable enforcement.
   # The cooldown is persisted, so a server restart does not clear it.
   cooldown-minutes: 30

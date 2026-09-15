@@ -12,8 +12,8 @@ import org.bukkit.entity.Player;
  * {@code Scheduler#entity} for the region that owns them.
  *
  * <p>The reminder observer is registered today, and carries both milestones and overtime so
- * that the two are ordered inside one entity task; enforcement registers its own alongside
- * it.
+ * that the two are ordered inside one entity task; {@code enforce.EnforcementService} is
+ * registered after it.
  */
 @FunctionalInterface
 public interface SessionObserver {

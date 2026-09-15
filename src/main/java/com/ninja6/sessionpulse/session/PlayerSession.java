@@ -5,6 +5,7 @@ import java.util.Collections;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -61,6 +62,13 @@ import java.util.concurrent.atomic.AtomicLong;
  *       reload changes {@code after-minutes} or {@code every-minutes}, and a minute compares
  *       the same under any configuration. {@link #claimOvertime(long)} has exactly one
  *       winner, and a seed racing it can only raise the bar, never lower it.</li>
+ *   <li>{@code enforced} - an {@link AtomicBoolean}, compare-and-set only. Set by the tick
+ *       when the enforcement threshold is claimed, and cleared only by the player's region
+ *       task, when a reload switched enforcement off between the claim and the kick. It is
+ *       per object, never seeded and never persisted: a rejoin is a new object and is judged
+ *       afresh on its first tick, which is what keeps a player who is still over the limit
+ *       from staying in by reconnecting. {@link #claimEnforcement()} has exactly one winner,
+ *       so two overlapping ticks schedule one disconnect, not two.</li>
  * </ul>
  */
 public final class PlayerSession {
@@ -94,6 +102,7 @@ public final class PlayerSession {
     private final AtomicLong lastAccrualNanos;
     private final Set<Integer> firedMinutes = ConcurrentHashMap.newKeySet();
     private final AtomicLong overtimeFiredMinute = new AtomicLong(NO_OVERTIME);
+    private final AtomicBoolean enforced = new AtomicBoolean();
 
     private volatile long afkSinceNanos = NOT_AFK;
 
@@ -316,6 +325,30 @@ public final class PlayerSession {
      */
     public void seedOvertime(long minute) {
         overtimeFiredMinute.accumulateAndGet(minute, Math::max);
+    }
+
+    /**
+     * Claims the disconnect for this connection.
+     *
+     * @return {@code true} only for the first call on this object. Callers disconnect only on
+     *         {@code true}, so two overlapping ticks can never both schedule one
+     */
+    public boolean claimEnforcement() {
+        return enforced.compareAndSet(false, true);
+    }
+
+    /**
+     * Gives a claimed disconnect back, so a later tick can claim it again.
+     *
+     * <p>For the one case where the claim was made and nothing was done with it on purpose: a
+     * reload switched enforcement off before the region task ran. Left claimed, switching it
+     * back on would never reach a player who was already over the limit, for as long as they
+     * stayed connected.
+     *
+     * @return {@code true} if this call cleared the claim
+     */
+    public boolean releaseEnforcement() {
+        return enforced.compareAndSet(true, false);
     }
 
     /**

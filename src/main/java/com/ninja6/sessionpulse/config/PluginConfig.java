@@ -80,8 +80,9 @@ public final class PluginConfig {
     static final int MIN_ENFORCEMENT_AT_MINUTES = 1;
     static final int MAX_ENFORCEMENT_AT_MINUTES = 10_080;
     /**
-     * Zero is not "no cooldown", it is a boot loop: the player reconnects still over the
-     * limit and is kicked again. Turning enforcement off is how you disable enforcement.
+     * Zero is not "no cooldown", it is no break: the disconnect resets the counted window, so
+     * the player could reconnect at once to a fresh allowance. Turning enforcement off is how
+     * you disable enforcement.
      */
     static final int MIN_ENFORCEMENT_COOLDOWN_MINUTES = 1;
     static final int MAX_ENFORCEMENT_COOLDOWN_MINUTES = 1440;

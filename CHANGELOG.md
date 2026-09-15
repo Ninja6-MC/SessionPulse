@@ -80,3 +80,12 @@ adheres to [Semantic Versioning](https://semver.org/).
   own region, so a server without it, or one that removes it mid-run, falls back rather
   than failing. The detector in force is named in the log at startup and on reload.
   `plugin.yml` soft-depends on `Essentials`.
+- Optional enforcement, off by default: with `enforcement.enabled`, a player whose counted
+  window reaches `at-minutes` is disconnected with `kick-message` and refused at pre-login
+  until `cooldown-minutes` have passed, with the time remaining on the refusal screen. The
+  cooldown is written and flushed before the disconnect, so a restart or a crash does not
+  clear it. The enforced break ends the counted window, so a player readmitted after the
+  cooldown starts a fresh allowance instead of being disconnected again at once; lifetime
+  playtime is kept. A reload that turns enforcement on applies on the next tick, and with
+  enforcement off the login gate admits everyone. Players holding `sessionpulse.exempt`
+  are never disconnected.
