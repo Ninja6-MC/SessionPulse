@@ -35,6 +35,18 @@ repositories {
     // FoliaLib. Not on Maven Central; declared now so the scheduler issue does not have
     // to touch this block again.
     maven("https://repo.tcoded.com/releases")
+    // GeyserMC / opencollab, for MCProtocolLib and nothing else. Last on purpose: only the
+    // botClient source set asks for anything published here, so the plugin's own
+    // configurations resolve from the repositories above and `./gradlew build` never
+    // depends on this host being up. The smoke legs build the bot fixture themselves.
+    maven("https://repo.opencollab.dev/main/")
+}
+
+// The protocol bot the smoke test drives a real player connection with. Its own source
+// set rather than src/test, so it compiles to a runnable jar and can never be picked up
+// by shadowJar and shipped. Copied from SpiralGenesis's botClient.
+sourceSets {
+    create("botClient")
 }
 
 // Declared once. The compile target and the test classpath must never drift apart,
@@ -98,6 +110,11 @@ dependencies {
     // YamlConfiguration runs standalone with no server instance, so the test suite needs
     // its own copy to cover configuration parsing from the configuration issue onward.
     testImplementation(spigotApi)
+
+    // A real protocol client for the smoke test, pinned to the one server version it
+    // speaks. A SNAPSHOT, so it can drift under us: when a smoke leg goes red on a bot
+    // decode error rather than an assertion, suspect this line before the plugin.
+    "botClientImplementation"("org.geysermc.mcprotocollib:protocol:1.21.11-SNAPSHOT")
 }
 
 tasks {
@@ -364,5 +381,23 @@ tasks {
     // away from moving.
     build {
         dependsOn(shadowJar)
+    }
+
+    // Packages the protocol bot as a runnable fat jar at a fixed, unversioned path the smoke
+    // legs refer to by name. Deliberately NOT wired into build, check or test: the required
+    // Build and Test check must not depend on a SNAPSHOT from a third-party repository, so
+    // only the bot legs of the boot job run this task.
+    register<Jar>("botClientJar") {
+        archiveBaseName.set("SessionPulseProbeBot")
+        archiveClassifier.set("")
+        archiveVersion.set("")
+        destinationDirectory.set(layout.buildDirectory.dir("test-fixtures"))
+        manifest { attributes["Main-Class"] = "com.ninja6.botclient.SessionPulseProbeBot" }
+        from(sourceSets["botClient"].output)
+        // Runs as its own process against a live server, so unlike the plugin it does need
+        // its dependencies inside it.
+        from(configurations["botClientRuntimeClasspath"].map { if (it.isDirectory) it else zipTree(it) })
+        duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+        exclude("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA", "module-info.class")
     }
 }
