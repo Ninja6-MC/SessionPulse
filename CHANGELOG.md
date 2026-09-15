@@ -117,3 +117,9 @@ adheres to [Semantic Versioning](https://semver.org/).
   refusal, which CraftBukkit sends as literal text that the client still colours.
 - `spigot` as a platform for `scripts/dev-server.sh` and `scripts/dev-server.ps1`, which
   build the server jar with BuildTools on the first run and reuse it after that.
+- A Latest Server Compatibility workflow, run on Mondays and on demand, that boots the
+  plugin on the newest Paper and Folia versions fill lists. The pick is the newest version that
+  is not a release candidate or pre-release, on whatever build channel that version has,
+  so it can be an ALPHA or BETA build; the version, Java and channel are written to the
+  job summary. The Java is the minimum fill publishes for that version. It never runs on
+  pull requests, is not a required check, and does not cover Spigot.
