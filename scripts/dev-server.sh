@@ -170,4 +170,10 @@ cat <<'BANNER'
 BANNER
 
 cd "$RUNDIR"
-exec java -Xms1G -Xmx2G -jar "$SERVER_JAR" --nogui
+# A BuildTools jar here is never refreshed, so CraftBukkit soon calls it outdated and
+# sleeps 20 seconds on every boot. The flag skips that, as smoke-test.sh does.
+JVM_FLAGS=()
+if [[ "$PLATFORM" == spigot ]]; then
+    JVM_FLAGS+=(-DIReallyKnowWhatIAmDoingISwear)
+fi
+exec java -Xms1G -Xmx2G "${JVM_FLAGS[@]}" -jar "$SERVER_JAR" --nogui

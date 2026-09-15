@@ -165,5 +165,9 @@ Write-Host "==> Starting $Platform $Version. Type ``stop`` to shut down."
 Write-Host ''
 
 Set-Location $RunDir
-& java -Xms1G -Xmx2G -jar $ServerJar --nogui
+# A BuildTools jar here is never refreshed, so CraftBukkit soon calls it outdated and
+# sleeps 20 seconds on every boot. The flag skips that, as smoke-test.sh does.
+$JvmFlags = @()
+if ($Platform -eq 'spigot') { $JvmFlags += '-DIReallyKnowWhatIAmDoingISwear' }
+& java -Xms1G -Xmx2G @JvmFlags -jar $ServerJar --nogui
 exit $LASTEXITCODE

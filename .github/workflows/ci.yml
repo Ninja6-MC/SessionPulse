@@ -312,7 +312,7 @@ jobs:
           java -jar BuildTools.jar --rev "$MC_VERSION" --compile SPIGOT \
             --output-dir "$RUNNER_TEMP/spigot-jar" --final-name "spigot-$MC_VERSION.jar"
           test -f "$RUNNER_TEMP/spigot-jar/spigot-$MC_VERSION.jar"
-          # About 2GB of checkouts and Maven output that nothing after this reads.
+          # The BuildTools checkouts, about 2GB, that nothing after this reads. Its Maven artifacts land in ~/.m2 and stay, which an ephemeral runner does not care about.
           cd "$RUNNER_TEMP"
           rm -rf "$RUNNER_TEMP/buildtools"
 

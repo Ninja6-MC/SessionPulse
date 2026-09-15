@@ -112,7 +112,7 @@ adheres to [Semantic Versioning](https://semver.org/).
 - A Spigot 1.21.11 leg in the smoke matrix, playing the same scripted session as the
   Paper and Folia legs. The server jar is built with BuildTools on the runner and kept in
   the repository's Actions cache, keyed by the BuildTools build, so a warm run does not
-  rebuild it. The smoke kick message is now coloured, and the legs assert that no
+  rebuild it. The smoke kick message is now coloured, and the bot legs assert that no
   MiniMessage tag or section sign reaches the bot unparsed, except on Spigot's login
   refusal, which CraftBukkit sends as literal text that the client still colours.
 - `spigot` as a platform for `scripts/dev-server.sh` and `scripts/dev-server.ps1`, which
