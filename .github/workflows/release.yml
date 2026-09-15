@@ -1,0 +1,405 @@
+name: Publish Release
+
+# Ported from SpiralGenesis's release.yml, with the differences called out where they occur.
+#
+# One pattern, not SpiralGenesis's two. A glob's `*` matches any run of characters that is
+# not `/`, dots and hyphens included, so `v*.*.*` already matches v1.0.0-beta.1 and a
+# separate `v*.*.*-*` entry adds nothing. It also matches plenty that is not a release tag
+# (v1.0.0-whatever, v1.2.3.4), which is why the first step validates the tag exactly.
+#
+# GitHub fires NO tag push events at all when more than three tags are pushed at once - not
+# three of them, none. `git push --tags` after tagging several releases locally therefore
+# publishes nothing and reports nothing. Push release tags one at a time, by name.
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+# A re-pushed tag must not cancel a run that may already be halfway through publishing to a
+# registry: an interrupted publish leaves a GitHub release without its Modrinth version, or
+# the reverse. So a second run for the same tag queues behind the first instead.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+# Top-level default. The `publish` job below overrides this with `contents: write`, which it
+# needs to create the GitHub release - a job's permissions REPLACE the workflow's on a normal
+# run, they are not capped by it. So this line costs the publisher nothing and scopes
+# anything added later to reads.
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Build and Publish Release
+    runs-on: ubuntu-latest
+    # A cold build and test is about a minute; the rest is two registry uploads. A hung
+    # upload would otherwise burn the 360-minute default.
+    timeout-minutes: 30
+
+    # No `environment:` key, unlike SpiralGenesis. Naming an environment that does not exist
+    # makes GitHub create it silently with no protection rules, which looks like a review
+    # gate and is not one. The pause before publishing is the tag itself, cut by hand on a
+    # commit already green on main (RELEASE_PROCESS.md). Adding a real environment with a
+    # required reviewer is a repository-settings change and belongs in its own issue.
+    permissions:
+      contents: write
+
+    # No job-level env carrying the registry tokens, unlike SpiralGenesis. Job-level env is
+    # exported into EVERY step - the Gradle build and tests included, which execute code
+    # and third-party plugins from this repository's dependency graph - so a token placed
+    # there is readable by far more than the one step that uploads with it. The `tokens`
+    # step below records only whether each secret is set, and each secret is then passed to
+    # its own publish step and nowhere else.
+
+    steps:
+      # First, so a malformed tag fails in seconds rather than after a toolchain setup. The
+      # trigger glob accepts any suffix, so `v1.0.0-whatever` reaches this job and would fall
+      # through the channel mapping below into a stable release. The tier a tag publishes to
+      # is decided by the tag, so the tag has to be exact. GITHUB_REF_NAME is the runner's
+      # own variable, not an expression, so nothing from the tag is templated into the script.
+      - name: Validate Tag Format
+        run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?$ ]]; then
+            echo "::error::Tag '$GITHUB_REF_NAME' is not a valid release tag."
+            echo
+            echo "Expected vMAJOR.MINOR.PATCH, optionally followed by"
+            echo "-alpha.N, -beta.N or -rc.N. For example:"
+            echo "  v1.0.0"
+            echo "  v1.0.0-beta.1"
+            echo
+            echo "Delete the tag, then re-tag with the correct format:"
+            echo "  git tag -d $GITHUB_REF_NAME && git push origin :refs/tags/$GITHUB_REF_NAME"
+            exit 1
+          fi
+          echo "Tag '$GITHUB_REF_NAME' is valid."
+
+      # Which registries this run can publish to. Secrets cannot be read in an `if`, so this
+      # step maps them into its OWN env - visible to this script only - and writes back a
+      # plain true/false per registry. The values are tested for emptiness and never printed
+      # or written anywhere. Both tokens are optional: absent, the matching publish step is
+      # skipped and the GitHub release still happens.
+      - name: Detect Registry Tokens
+        id: tokens
+        env:
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+          HANGAR_API_TOKEN: ${{ secrets.HANGAR_API_TOKEN }}
+        run: |
+          if [ -n "$MODRINTH_TOKEN" ]; then MODRINTH=true; else MODRINTH=false; fi
+          if [ -n "$HANGAR_API_TOKEN" ]; then HANGAR=true; else HANGAR=false; fi
+          {
+            echo "modrinth=$MODRINTH"
+            echo "hangar=$HANGAR"
+          } >> "$GITHUB_OUTPUT"
+          echo "Modrinth token configured: $MODRINTH; Hangar token configured: $HANGAR"
+
+      # Full history, because the next step needs main's history to compare against.
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      # RELEASE_PROCESS.md says tags are cut on main, and this is what makes that a rule
+      # rather than a habit. A tag pushed on a topic branch would otherwise publish code that
+      # never passed review or main's required checks. The tagged commit must be main's head
+      # or an ancestor of it; a tag on an older main commit is allowed, which is what a
+      # re-tag after a failed run needs.
+      #
+      # fetch-depth 0 normally brings origin/main with it. The explicit fetch is the fallback
+      # for a checkout that did not, and it runs unauthenticated because credentials are not
+      # persisted - fine for a public repository.
+      - name: Require Tagged Commit On Main
+        run: |
+          if ! git rev-parse --verify --quiet origin/main >/dev/null; then
+            git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          fi
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME points at $GITHUB_SHA, which is not on main."
+            echo "Release tags are cut on main. Merge the change, then tag a commit on main."
+            exit 1
+          fi
+          echo "$GITHUB_SHA is on main."
+
+      # `gradle/wrapper/gradle-wrapper.jar` is an executable committed to the repository and
+      # run by every job that calls ./gradlew, and no reviewer can read a diff of it. This
+      # checksums it against Gradle's published releases. Before anything that could execute
+      # it, and with the same retry as ci.yml: the check reaches services.gradle.org with no
+      # retry of its own, and a transient failure here would fail a tagged release. See the
+      # fuller note in ci.yml.
+      - name: Validate Gradle Wrapper
+        id: wrapper
+        continue-on-error: true
+        uses: gradle/actions/wrapper-validation@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+
+      # ENETUNREACH returns instantly, so retrying straight away would prove nothing.
+      - name: Wait Before Revalidating
+        if: steps.wrapper.outcome == 'failure'
+        run: sleep 15
+
+      # Only reached when the first attempt failed. A wrapper that fails twice fails the job.
+      - name: Validate Gradle Wrapper (retry)
+        if: steps.wrapper.outcome == 'failure'
+        uses: gradle/actions/wrapper-validation@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+
+      - name: Set up Java 21
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+
+      # The tag is already validated, so the suffix is one of exactly four shapes and a
+      # `case` on it is total. Hangar differs from SpiralGenesis here: an alpha gets an EMPTY
+      # hangarChannel, which skips the Hangar step, because RELEASE_PROCESS.md's tier table
+      # publishes alphas to GitHub and Modrinth only. SpiralGenesis publishes alphas to a
+      # Hangar Alpha channel; this project has none. rc maps to beta on both registries,
+      # which have no release-candidate tier.
+      #
+      # make_latest is written out rather than left to softprops' default, which follows
+      # GitHub's "latest by date and semver" rule and would move the Latest badge in ways a
+      # reader of this file cannot predict. Only a stable tag may take it.
+      - name: Extract Tag & Release Channel
+        id: vars
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          {
+            echo "tag=$GITHUB_REF_NAME"
+            echo "version=$VERSION"
+            # Everything before the first hyphen: 1.0.0-beta.1 -> 1.0.0.
+            echo "baseVersion=${VERSION%%-*}"
+            echo "jar=SessionPulse-$VERSION.jar"
+          } >> "$GITHUB_OUTPUT"
+
+          case "$VERSION" in
+            *-alpha.*)
+              CHANNEL=alpha; HANGAR_CHANNEL=''; PRERELEASE=true ;;
+            *-beta.*|*-rc.*)
+              CHANNEL=beta; HANGAR_CHANNEL=Beta; PRERELEASE=true ;;
+            *)
+              CHANNEL=release; HANGAR_CHANNEL=Release; PRERELEASE=false ;;
+          esac
+          {
+            echo "channel=$CHANNEL"
+            echo "hangarChannel=$HANGAR_CHANNEL"
+            echo "prerelease=$PRERELEASE"
+            # softprops reads make_latest as the string 'true' or 'false'.
+            if [ "$PRERELEASE" = true ]; then echo "makeLatest=false"; else echo "makeLatest=true"; fi
+          } >> "$GITHUB_OUTPUT"
+          echo "channel=$CHANNEL hangarChannel='${HANGAR_CHANNEL}' prerelease=$PRERELEASE"
+
+      # Before the build, so a stable tag with no changelog section fails in seconds.
+      #
+      # One rule, used for all three destinations - the GitHub release body, the Modrinth
+      # changelog and the Hangar changelog:
+      #   stable       ## [X.Y.Z] is REQUIRED; without it the run fails.
+      #   pre-release  ## [X.Y.Z-pre.N], else ## [X.Y.Z], else ## [Unreleased], else a fixed
+      #                sentence saying no section was written.
+      # A pre-release is cut from main while the work is still under [Unreleased], so that
+      # section is the honest description of what it contains. The notes never say "see the
+      # GitHub release": on GitHub that points at itself, and on a registry it points at a
+      # page carrying the same text.
+      #
+      # A section ends at the next `## ` heading or at the first Keep-a-Changelog link
+      # reference (`[0.1.0]: https://...`), which sits after the last section and would
+      # otherwise be swept into the oldest version's notes. A heading counts when the line
+      # STARTS with `## [<version>]`, so `## [0.1.0] - 2026-10-01` matches 0.1.0 and
+      # `## [0.1.0-rc.1]` does not. A section of only whitespace counts as absent.
+      #
+      # release-notes.md feeds both registries; release-body.md is the same text plus the
+      # Java requirement, for the GitHub release, where readers download the jar directly.
+      - name: Check Changelog And Collect Release Notes
+        env:
+          VERSION: ${{ steps.vars.outputs.version }}
+          BASE_VERSION: ${{ steps.vars.outputs.baseVersion }}
+          PRERELEASE: ${{ steps.vars.outputs.prerelease }}
+        run: |
+          extract() {
+            awk -v header="## [$1]" '
+              index($0, header) == 1 { found = 1; next }
+              found && /^## / { exit }
+              found && /^\[[^]]+\]: / { exit }
+              found { print }
+            ' CHANGELOG.md
+          }
+          blank() { [ -z "${1//[[:space:]]/}" ]; }
+
+          if [ "$PRERELEASE" != "true" ]; then
+            NOTES="$(extract "$VERSION")"
+            if blank "$NOTES"; then
+              echo "::error::CHANGELOG.md has no '## [$VERSION]' section."
+              echo
+              echo "A stable release must document what changed. Move the [Unreleased]"
+              echo "entries under a '## [$VERSION]' heading, merge that to main, and re-tag."
+              exit 1
+            fi
+          else
+            NOTES="$(extract "$VERSION")"
+            blank "$NOTES" && NOTES="$(extract "$BASE_VERSION")"
+            blank "$NOTES" && NOTES="$(extract "Unreleased")"
+            blank "$NOTES" && NOTES="No changelog section was written for this pre-release."
+          fi
+
+          mkdir -p build
+          printf '%s\n' "$NOTES" > build/release-notes.md
+          printf '%s\n\n%s\n' "$NOTES" "Requires Java 21." > build/release-body.md
+          echo "Release notes:"
+          cat build/release-notes.md
+
+      # Defensive, as in ci.yml: `gradlew` carries mode 100755 in the index today.
+      - name: Ensure Gradle Wrapper Is Executable
+        run: chmod +x ./gradlew
+
+      # Never publish an artifact whose tests have not passed. `test` and `shadowJar`, not
+      # `build`: the sources and javadoc jars are not published, and CI has already run
+      # `build` on this commit - which is why RELEASE_PROCESS.md makes "CI green on the
+      # tagged commit" the gate for cutting the tag.
+      - name: Run Tests
+        run: ./gradlew test --no-daemon
+
+      # shadowJar's doLast proves the relocation and the licence notices on this very jar.
+      - name: Build Release JAR
+        env:
+          VERSION: ${{ steps.vars.outputs.version }}
+        run: ./gradlew shadowJar -PpluginVersion="$VERSION" --no-daemon
+
+      # Every upload below names the jar exactly, so prove it is the only one there. A
+      # future task that also writes into build/libs would otherwise sit beside the plugin
+      # unnoticed, and a version mismatch between the tag and the jar would upload nothing.
+      - name: Verify Release JAR
+        env:
+          JAR: ${{ steps.vars.outputs.jar }}
+        run: |
+          shopt -s nullglob
+          JARS=(build/libs/*.jar)
+          if [ "${#JARS[@]}" -ne 1 ] || [ "${JARS[0]}" != "build/libs/$JAR" ]; then
+            echo "::error::Expected exactly build/libs/$JAR, found: ${JARS[*]:-nothing}"
+            exit 1
+          fi
+          echo "Release jar: build/libs/$JAR"
+
+      # From inside build/libs, so the .sha256 file holds a bare filename and
+      # `sha256sum -c SessionPulse-<version>.jar.sha256` works next to a downloaded jar.
+      - name: Generate Checksum
+        working-directory: build/libs
+        env:
+          JAR: ${{ steps.vars.outputs.jar }}
+        run: |
+          sha256sum "$JAR" > "$JAR.sha256"
+          sha256sum -c "$JAR.sha256"
+          cat "$JAR.sha256"
+
+      # The GitHub release is created first and is the one destination that is always
+      # published. Its body is CHANGELOG.md's text, never GitHub's generated notes, which
+      # would list squash-merge titles instead. The default github.token is used; it has
+      # contents: write from the job's permissions above. The id is what the Hangar step
+      # checks, so that step can still run after a Modrinth failure.
+      - name: Create GitHub Release
+        id: github-release
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          tag_name: ${{ steps.vars.outputs.tag }}
+          name: SessionPulse ${{ steps.vars.outputs.tag }}
+          body_path: build/release-body.md
+          draft: false
+          prerelease: ${{ steps.vars.outputs.prerelease }}
+          make_latest: ${{ steps.vars.outputs.makeLatest }}
+          generate_release_notes: false
+          fail_on_unmatched_files: true
+          files: |
+            build/libs/${{ steps.vars.outputs.jar }}
+            build/libs/${{ steps.vars.outputs.jar }}.sha256
+
+      # Registry publishing is NOT atomic. Once the GitHub release exists, Modrinth and Hangar
+      # are independent of each other: a Modrinth failure fails the job but does not skip
+      # Hangar (see its `if`), and whatever succeeded stays published. Recovery is in
+      # RELEASE_PROCESS.md; a registry rejects a second upload of a version it already holds,
+      # so a re-run fails on the registry that succeeded and publishes the one that did not.
+      #
+      # The project slug is a repository variable so a registry project can be created under
+      # a different slug without editing this file; the default is the expected one.
+      #
+      # The token is passed as this step's input and nowhere else in the job.
+      #
+      # modrinth-featured false and modrinth-unfeature-mode none, because featuring is a
+      # manual decision taken on Modrinth after a stable release (RELEASE_PROCESS.md).
+      # mc-publish's defaults would otherwise decide it on every run: its featured default
+      # features a new version, and its default unfeature mode un-features older versions
+      # whose game versions and loaders fall within this one's - which, with one fixed list,
+      # is every earlier release, including the one a maintainer featured by hand.
+      #
+      # game-versions is explicit and matches releaseGameVersions in build.gradle.kts entry
+      # for entry - edit both together. No `1.20.x` or `1.21.x`: the first would claim
+      # 1.20-1.20.3, below the 1.20.4 compile target, and a wildcard in general widens by
+      # itself whenever the registry learns a new version, which is a compatibility claim
+      # nobody reviewed. 26.x is deliberately absent; see the note on releaseGameVersions.
+      - name: Publish to Modrinth
+        id: modrinth
+        if: steps.tokens.outputs.modrinth == 'true'
+        uses: Kira-NT/mc-publish@52307b03863581dec6b652b83e597aec02ebb075 # v3.3.1
+        with:
+          modrinth-id: ${{ vars.MODRINTH_PROJECT || 'sessionpulse' }}
+          modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
+          modrinth-featured: false
+          modrinth-unfeature-mode: none
+          name: SessionPulse ${{ steps.vars.outputs.version }}
+          version: ${{ steps.vars.outputs.version }}
+          version-type: ${{ steps.vars.outputs.channel }}
+          changelog-file: build/release-notes.md
+          files: build/libs/${{ steps.vars.outputs.jar }}
+          # The four platforms the README claims. The smoke matrix boots Paper, Folia and
+          # Spigot; Purpur is a Paper fork and is not booted in CI.
+          loaders: |
+            paper
+            spigot
+            purpur
+            folia
+          game-versions: |
+            1.20.4
+            1.20.5
+            1.20.6
+            1.21
+            1.21.1
+            1.21.2
+            1.21.3
+            1.21.4
+            1.21.5
+            1.21.6
+            1.21.7
+            1.21.8
+            1.21.9
+            1.21.10
+            1.21.11
+          java: 21
+
+      # Skipped for alpha tags (empty hangarChannel) as well as without a token.
+      #
+      # `!cancelled()` replaces the implicit `success()`, which would skip this step whenever
+      # any earlier step failed - Modrinth included. The GitHub release outcome is then
+      # checked explicitly, so a failure anywhere up to and including the GitHub release (tag
+      # validation, tests, the jar, the checksum) still stops Hangar: those steps all run
+      # before it, and a failure in any of them skips the release step, whose outcome is then
+      # not 'success'.
+      #
+      # HANGAR_API_TOKEN is in this step's env only; the Gradle plugin reads it from there.
+      # The publish task depends on shadowJar and is passed the same -PpluginVersion, so it
+      # reuses the jar built and checksummed above rather than producing a different one.
+      - name: Publish to Hangar
+        if: >-
+          !cancelled()
+          && steps.github-release.outcome == 'success'
+          && steps.tokens.outputs.hangar == 'true'
+          && steps.vars.outputs.hangarChannel != ''
+        env:
+          HANGAR_API_TOKEN: ${{ secrets.HANGAR_API_TOKEN }}
+          VERSION: ${{ steps.vars.outputs.version }}
+          HANGAR_CHANNEL: ${{ steps.vars.outputs.hangarChannel }}
+          HANGAR_PROJECT: ${{ vars.HANGAR_PROJECT || 'SessionPulse' }}
+        run: >
+          ./gradlew publishPluginPublicationToHangar
+          -PpluginVersion="$VERSION"
+          -PhangarChannel="$HANGAR_CHANNEL"
+          -PhangarProject="$HANGAR_PROJECT"
+          --no-daemon

@@ -74,6 +74,9 @@ git push -u origin feat/my-actual-change && git push origin --delete <old-name>
    * All player-facing output goes through `notify/Notifier`; `player.sendMessage(Component)`
      fails at runtime on Paper.
    * All HTTP or file I/O must be off the main server thread.
+   * A new shaded dependency (anything added to `runtimeClasspath`) needs an entry in
+     `THIRD_PARTY_NOTICES.md` with its coordinates, version, repository, copyright line and
+     licence text, in the same pull request.
 4. **Testing**:
    Add JUnit 5 unit tests for any logic modifications:
    ```bash
