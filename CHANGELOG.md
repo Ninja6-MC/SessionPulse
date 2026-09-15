@@ -98,3 +98,14 @@ adheres to [Semantic Versioning](https://semver.org/).
   `config.yml`, reschedules the flush and the session tick by their own handles, and
   leaves the configuration in force if the file does not parse. Completion offers only
   what the sender may run, and only the online names they can see.
+- A gameplay smoke test on the Paper and Folia 1.21.11 legs: a protocol bot joins a
+  real server and the leg asserts, from what the bot received, that a milestone
+  delivers its chat line, action bar, title, subtitle and sound, that enforcement kicks
+  at the threshold, that the cooldown refuses the next login, and that the login is let
+  through once the cooldown lapses. `boot-test.sh` is renamed `smoke-test.sh`, and the
+  1.20.4 legs remain boot-only.
+- `SessionPulseProbeBot`, the MCProtocolLib client behind it, built by the
+  `botClientJar` task into `build/test-fixtures` and never wired into `build`.
+- A platform argument for `scripts/dev-server.sh` (`[paper|folia] [mc-version]`, with
+  the old version-only form still booting Paper), and `scripts/dev-server.ps1`, the
+  same dev server for Windows PowerShell 5.1.

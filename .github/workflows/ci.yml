@@ -132,9 +132,10 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     # A hung JVM is caught by the script's own BOOT_TIMEOUT, but a hung download is not.
-    # 30 rather than 25 since the bot legs: the scripted session is about seven minutes of
-    # wall clock on top of the boot, plus a cold Gradle build of the bot fixture.
-    timeout-minutes: 30
+    # 35 rather than 25 since the bot legs: the scripted session is about seven minutes of
+    # wall clock on top of the boot, plus a cold Gradle build of the bot fixture, and a
+    # stop that has to fall through to the kill still needs room to upload the logs.
+    timeout-minutes: 35
 
     strategy:
       # Paper and Folia fail for different reasons, and seeing both results is the point.

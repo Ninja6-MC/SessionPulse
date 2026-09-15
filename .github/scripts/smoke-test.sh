@@ -109,9 +109,15 @@ echo "eula=true" > eula.txt
 
 # A flat world, unlike SpiralGenesis's: nothing here touches terrain, and generating a
 # normal world would cost CI minutes to produce something no assertion reads. Matches
-# scripts/dev-server.sh. max-players=1 because at most the one bot joins, and a slot the
-# previous session has not released yet refuses the next with "server is full" - which is
-# why every rejoin below waits for the server's own `lost connection` line, not a sleep.
+# scripts/dev-server.sh. max-players=1 on the boot-only legs, because nobody joins.
+#
+# With BOT_JAR it is 5, and 1 is not enough even for one bot: Folia 1.21.11 refused the
+# very FIRST join with multiplayer.disconnect.server_full at max-players=1, with nobody
+# else online - its login-phase capacity check counts differently from Paper's, which let
+# the same bot in. Every rejoin below still waits for the server's own `lost connection`
+# line rather than a sleep, so the gameplay never relies on the spare slots.
+MAX_PLAYERS=1
+[[ -z "$BOT_JAR" ]] || MAX_PLAYERS=5
 cat > server.properties <<PROPS
 online-mode=false
 server-ip=127.0.0.1
@@ -120,7 +126,7 @@ level-type=minecraft\\:flat
 view-distance=4
 simulation-distance=4
 spawn-protection=0
-max-players=1
+max-players=$MAX_PLAYERS
 motd=SessionPulse CI boot test
 enable-command-block=false
 PROPS
@@ -343,7 +349,9 @@ smoke_gameplay() {
     # --- 3. Straight back in: the cooldown refuses the login --------------------------
     start_bot 30
     log="bot-$BOT_RUNS.log"
-    finish_bot 60 || { fail "Bot run 3 did not exit - the cooldown did not refuse the login."; return; }
+    # The bot exits on its own after 30s whatever happens, so failing this means the
+    # process hung, not that the login was let through; the next two checks decide that.
+    finish_bot 60 || { fail "Bot run 3 hung - the process did not exit within 60s."; return; }
     bot_has "$log" "BOT disconnect phase=login reason=SP-SMOKE-KICK 1" \
         || { fail "The cooldown did not refuse the login with 'SP-SMOKE-KICK 1' - see $log."; return; }
     ! bot_has "$log" "BOT joined" \
@@ -362,12 +370,23 @@ smoke_gameplay() {
     wait_until 60 bot_has "$log" "BOT joined" \
         || { fail "Bot run 4 was not let back in after the cooldown lapsed - see $log."; return; }
     echo "Login allowed after the cooldown."
-    # Still past at-minutes, so enforcement may kick it again at once; either way it ends.
-    finish_bot 60 || fail "Bot run 4 did not exit."
+    finish_bot 60 || { fail "Bot run 4 hung - the process did not exit within 60s."; return; }
+    # Enforcement resets the counted window before it kicks, so the returning player starts
+    # from zero and must not be kicked again straight away. A game-phase disconnect here
+    # means the reset did not happen and the player is locked out in a kick loop.
+    ! grep -qF 'BOT disconnect phase=game' "$log" \
+        || fail "Bot run 4 was kicked again after the cooldown - enforcement did not reset the window before the kick."
 }
 
 if [[ "$booted" -eq 1 && -n "$BOT_JAR" ]]; then
     smoke_gameplay
+    # An early return can leave a bot connected. Stop it and reap it now, so its log is
+    # complete and flushed before it is printed and uploaded, and so it is not still
+    # holding a connection while the server shuts down.
+    if [[ -n "$BOT_PID" ]] && kill -0 "$BOT_PID" 2>/dev/null; then
+        kill "$BOT_PID" 2>/dev/null || true
+    fi
+    [[ -z "$BOT_PID" ]] || wait "$BOT_PID" 2>/dev/null || true
 fi
 
 if [[ "$booted" -eq 1 ]]; then
@@ -380,6 +399,13 @@ if [[ "$booted" -eq 1 ]]; then
 fi
 
 exec 3>&- 2>/dev/null || true
+# A server still alive after STOP_TIMEOUT - or one that never booted - would otherwise hang
+# this wait until the job timeout. Killed, the missing 'SessionPulse disabled' line below
+# reports it as the failure it is.
+if kill -0 "$SERVER_PID" 2>/dev/null; then
+    echo "::warning::Server still running after the stop request; killing it."
+    kill -9 "$SERVER_PID" 2>/dev/null || true
+fi
 wait "$SERVER_PID" 2>/dev/null || true
 trap - EXIT
 
@@ -533,7 +559,10 @@ fi
 
 # Any stack trace naming our package is a defect wherever it surfaced.
 if grep -q 'com\.ninja6\.sessionpulse' server.log && grep -qE '^[[:space:]]+at ' server.log; then
-    ! grep -B5 'at com\.ninja6\.sessionpulse' server.log | grep -qE 'Exception|Error' \
+    # Captured first, not piped: `grep -q` exits at its first match, the upstream grep can
+    # then die of SIGPIPE, and under pipefail that turns a found stack trace into a pass.
+    TRACE_CONTEXT="$(grep -B5 'at com\.ninja6\.sessionpulse' server.log || true)"
+    ! grep -qE 'Exception|Error' <<<"$TRACE_CONTEXT" \
         || fail "A stack trace referencing com.ninja6.sessionpulse appeared in the log."
 fi
 

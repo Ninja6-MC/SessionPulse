@@ -127,6 +127,14 @@ public final class SessionPulseProbeBot {
 
             @Override
             public void disconnected(DisconnectedEvent event) {
+                // The transport-level end of every session, including ones no disconnect
+                // packet explains - a refused connection, a decode failure on a drifted
+                // SNAPSHOT. The cause goes to stderr, which the script captures into the
+                // same bot log, so a red leg shows why the socket closed.
+                report("closed reason=" + plain(event.getReason()));
+                if (event.getCause() != null) {
+                    event.getCause().printStackTrace();
+                }
                 finished.countDown();
             }
         });
@@ -140,7 +148,6 @@ public final class SessionPulseProbeBot {
             session.disconnect("done");
             finished.await(10, TimeUnit.SECONDS);
         }
-        report("closed");
         // Netty keeps non-daemon threads alive; nothing here needs a graceful pool shutdown.
         System.exit(0);
     }
@@ -157,8 +164,9 @@ public final class SessionPulseProbeBot {
 
     /**
      * Flattens a component to its text, depth first. Hand-rolled rather than taking the
-     * plain serializer so the fixture adds no dependency beyond MCProtocolLib; a
-     * translatable component contributes its key, which is enough to see it was not ours.
+     * plain serializer so the fixture adds no dependency beyond MCProtocolLib. A
+     * translatable component contributes its key followed by its arguments, so a vanilla
+     * message such as a server-full refusal still shows what it was about.
      */
     private static String plain(Component component) {
         StringBuilder out = new StringBuilder();
@@ -174,6 +182,10 @@ public final class SessionPulseProbeBot {
             out.append(text.content());
         } else if (component instanceof TranslatableComponent translatable) {
             out.append(translatable.key());
+            for (var argument : translatable.arguments()) {
+                out.append(' ');
+                append(out, argument.asComponent());
+            }
         }
         for (Component child : component.children()) {
             append(out, child);
