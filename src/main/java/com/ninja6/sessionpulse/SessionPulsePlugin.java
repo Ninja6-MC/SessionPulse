@@ -3,6 +3,7 @@ package com.ninja6.sessionpulse;
 import com.ninja6.sessionpulse.afk.AfkService;
 import com.ninja6.sessionpulse.afk.BuiltInAfkDetector;
 import com.ninja6.sessionpulse.afk.EssentialsLookup;
+import com.ninja6.sessionpulse.commands.SessionPulseCommand;
 import com.ninja6.sessionpulse.config.PluginConfig;
 import com.ninja6.sessionpulse.enforce.EnforcementService;
 import com.ninja6.sessionpulse.listeners.LoginGateListener;
@@ -16,15 +17,21 @@ import com.ninja6.sessionpulse.platform.Scheduler;
 import com.ninja6.sessionpulse.session.SessionClock;
 import com.ninja6.sessionpulse.session.PlayerSession;
 import com.ninja6.sessionpulse.session.SessionObserver;
+import com.ninja6.sessionpulse.session.SessionTickSchedule;
 import com.ninja6.sessionpulse.session.SessionTickTask;
 import com.ninja6.sessionpulse.session.SessionTracker;
 import com.ninja6.sessionpulse.storage.DataStorage;
 import com.ninja6.sessionpulse.storage.YamlDataStorage;
 import org.bukkit.Sound;
+import org.bukkit.command.PluginCommand;
+import org.bukkit.configuration.InvalidConfigurationException;
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.event.HandlerList;
 import org.bukkit.plugin.java.JavaPlugin;
 
+import java.io.File;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -34,8 +41,8 @@ import java.util.UUID;
  *
  * <p>It owns the things that have to outlive a single call and be torn down in a defined
  * order: the scheduler seam, storage, and the notifier that is the plugin's only route to
- * a player's screen. The command declared in {@code plugin.yml} still has no
- * executor, so {@code /spulse} prints its usage string until the command issue lands.
+ * a player's screen. It also wires {@code /spulse} to {@link SessionPulseCommand}, and
+ * {@link #reload()} is the one thing that command calls to reload the configuration.
  */
 public class SessionPulsePlugin extends JavaPlugin {
 
@@ -78,13 +85,14 @@ public class SessionPulsePlugin extends JavaPlugin {
     private AfkService afk;
 
     /**
-     * The session tick, held by its handle rather than cancelled in bulk.
+     * The session tick, held by its own schedule rather than cancelled in bulk.
      *
-     * <p>{@code /spulse reload} has to cancel and reschedule this one task individually.
-     * The blanket cancel is disable-only, and reaching for it here would stop the plugin
-     * counting while the command reported success.
+     * <p>{@code /spulse reload} has to replace this one task individually, which
+     * {@link SessionTickSchedule#reschedule()} does by handle. The blanket cancel is
+     * disable-only, and reaching for it here would stop the plugin counting while the
+     * command reported success.
      */
-    private Scheduler.Task sessionTick;
+    private SessionTickSchedule sessionTick;
 
     @Override
     public void onEnable() {
@@ -149,9 +157,25 @@ public class SessionPulsePlugin extends JavaPlugin {
                 new ReminderObserver(tracker, scheduler, notifier, storage::flushAsync);
         SessionObserver enforcement =
                 new EnforcementService(tracker, scheduler, notifier, storage, clock, this::config);
-        this.sessionTick = scheduler.globalRepeating(
+        // The period is a supplier, read at every schedule, so a reload's reschedule would pick
+        // up a changed one. Today it is the constant.
+        this.sessionTick = new SessionTickSchedule(scheduler,
                 new SessionTickTask(tracker, afk, List.of(reminders, enforcement), getLogger()),
-                SessionTickTask.DELAY_TICKS, SessionTickTask.PERIOD_TICKS);
+                SessionTickTask.DELAY_TICKS, () -> SessionTickTask.PERIOD_TICKS);
+        sessionTick.start();
+
+        // Last, once everything it reaches exists. A missing command is a broken plugin.yml,
+        // not a reason to stop counting: say so and run without it.
+        PluginCommand command = getCommand("spulse");
+        if (command == null) {
+            getLogger().severe("plugin.yml does not declare /spulse; the command is unavailable.");
+        } else {
+            SessionPulseCommand executor = new SessionPulseCommand(tracker, storage, notifier,
+                    clock, this::config, this::reload, getLogger(),
+                    getServer()::getPlayerExact, getServer()::getOnlinePlayers);
+            command.setExecutor(executor);
+            command.setTabCompleter(executor);
+        }
 
         getLogger().info("SessionPulse enabled (scheduler: " + scheduler.platformName() + ").");
 
@@ -184,12 +208,16 @@ public class SessionPulsePlugin extends JavaPlugin {
         // Order matters. Tasks next: a tick still running while the notifier closes would
         // send into a closing provider and throw during shutdown, which the boot legs
         // would - correctly - read as a dirty disable.
+        // The tick is retired first, under its own lock, the order YamlDataStorage#shutdown
+        // uses: a reload racing this disable then finds the flag set and cannot schedule a
+        // tick after the blanket cancel below has run.
+        if (sessionTick != null) {
+            sessionTick.retire();
+        }
         if (scheduler != null) {
             scheduler.cancelAll();
             scheduler = null;
         }
-        // Nulled after the tasks are stopped, not before: the handle is only meaningful
-        // while the scheduler is alive, and the blanket cancel above has already stopped it.
         this.sessionTick = null;
         if (afk != null) {
             afk.retire();
@@ -254,7 +282,7 @@ public class SessionPulsePlugin extends JavaPlugin {
     }
 
     /**
-     * Re-reads config.yml. Called by {@code /spulse reload} once the command issue lands.
+     * Re-reads config.yml. Called by {@code /spulse reload}, on the sender's thread.
      *
      * <p><strong>The only way to reload the configuration.</strong> Callers do not publish a
      * configuration or seed milestones themselves: this method orders milestone seeding
@@ -263,17 +291,61 @@ public class SessionPulsePlugin extends JavaPlugin {
      *
      * <p>Does NOT call {@code Scheduler#cancelAll}. That is disable-only: cancelling every
      * task here would kill the session tick and the plugin would silently stop counting.
-     * The reload issue re-schedules the flush and tick tasks by their own handles - the
-     * flush through {@link DataStorage#rescheduleFlush()}.
+     * The flush and the tick are rescheduled by their own handles instead, after the new
+     * file is published so each reads the new values: the flush through
+     * {@link DataStorage#rescheduleFlush()}, the tick through
+     * {@link SessionTickSchedule#reschedule()}.
      *
      * <p>Re-resolves AFK detection after the new file is published, so a changed
      * {@code tracking.afk.mode} and a changed EssentialsX {@code auto-afk} take effect here.
+     *
+     * <p>The file is parsed before anything is replaced. {@code JavaPlugin#reloadConfig} logs a
+     * YAML syntax error and carries on with an empty document, which would publish every
+     * default over the operator's settings and report success. A file that does not parse
+     * throws here instead, and the configuration in force stays.
+     *
+     * <p>Each field is read once into a local: {@code onDisable} nulls them, and on Folia a
+     * player's reload runs on their region thread while disable runs on the main one.
+     *
+     * @throws IllegalStateException if config.yml exists and cannot be parsed
      */
     public void reload() {
+        requireParses(new File(getDataFolder(), "config.yml"));
         reloadConfig();
         loadConfiguration();
+        AfkService afk = this.afk;
         if (afk != null) {
             afk.resolve();
+        }
+        YamlDataStorage storage = this.storage;
+        if (storage != null) {
+            storage.rescheduleFlush();
+        }
+        SessionTickSchedule sessionTick = this.sessionTick;
+        if (sessionTick != null) {
+            sessionTick.reschedule();
+        }
+    }
+
+    /**
+     * Throws if {@code file} exists and cannot be parsed as YAML.
+     *
+     * <p>A missing file passes: {@code reloadConfig} then falls back to the defaults shipped in
+     * the jar, the values a fresh install starts with, which is what an operator who deleted
+     * the file asked for. Package-private so the check is tested without a server.
+     *
+     * @param file the configuration file
+     * @throws IllegalStateException carrying the parser's error, if the file cannot be parsed
+     */
+    static void requireParses(File file) {
+        if (!file.isFile()) {
+            return;
+        }
+        try {
+            new YamlConfiguration().load(file);
+        } catch (IOException | InvalidConfigurationException e) {
+            throw new IllegalStateException(file.getName() + " could not be parsed; the "
+                    + "configuration in force was kept.", e);
         }
     }
 

@@ -109,9 +109,7 @@ public final class SessionTracker {
             PluginConfig current = config.get();
             SessionSnapshot stored = store.load(key);
 
-            long gapMillis = wallNow - stored.lastSeenMillis();
-            long thresholdMillis = (long) current.windowResetHours() * MILLIS_PER_HOUR;
-            boolean reset = stored.isUnknown() || gapMillis > thresholdMillis;
+            boolean reset = windowExpired(stored, current, wallNow);
 
             PlayerSession session = new PlayerSession(
                     key,
@@ -134,6 +132,29 @@ public final class SessionTracker {
             seed(joined, afterJoin);
         }
         return joined;
+    }
+
+    /**
+     * Whether a stored window would be reset if its player joined at {@code wallNow}.
+     *
+     * <p>The decision {@link #onJoin} makes, and the only copy of it. Public because
+     * {@code /spulse time} shows an offline player's window as it would be on their next
+     * join, and a second copy of the rule is one that drifts: a player told they have two
+     * hours left who joins to a fresh window has been told something the plugin never meant.
+     *
+     * <p>An unknown record always resets. A known one resets once the gap since last-seen is
+     * strictly longer than {@code tracking.window-reset-hours}.
+     *
+     * @param stored  what the store holds for the player
+     * @param current the configuration to judge against
+     * @param wallNow the calendar reading to judge at
+     * @return {@code true} if the window would start again from zero
+     */
+    public static boolean windowExpired(SessionSnapshot stored, PluginConfig current,
+                                        long wallNow) {
+        long gapMillis = wallNow - stored.lastSeenMillis();
+        long thresholdMillis = (long) current.windowResetHours() * MILLIS_PER_HOUR;
+        return stored.isUnknown() || gapMillis > thresholdMillis;
     }
 
     /**

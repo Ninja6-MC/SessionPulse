@@ -115,4 +115,15 @@ class PlaceholdersTest {
     void anUnsetPlaceholderRendersLiterally() {
         assertEquals("Hi <player>!", render("Hi <player>!", Placeholders.none()));
     }
+
+    @Test
+    @DisplayName("rank is a plain integer and lifetime truncates to tenths like hours")
+    void rankAndLifetime() {
+        assertEquals("3|1.4", render("<rank>|<lifetime>",
+                Placeholders.none().rank(3).lifetime(5399)));
+        assertEquals("0.0", render("<lifetime>", Placeholders.none().lifetime(-1)));
+        assertEquals("10.0", render("<lifetime>", Placeholders.none().lifetime(36000)));
+        assertEquals("1.5 2.0", render("<hours> <lifetime>",
+                Placeholders.none().hours(5400).lifetime(7200)));
+    }
 }
