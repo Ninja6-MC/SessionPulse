@@ -157,12 +157,13 @@ hangarPublish {
         channel.set(providers.gradleProperty("hangarChannel").orElse("Release"))
         apiKey.set(providers.environmentVariable("HANGAR_API_TOKEN"))
         // Written by the release workflow before it publishes, from CHANGELOG.md. Absent
-        // only on a local invocation, where the fallback applies. The fallback is the same
-        // sentence the workflow writes for a pre-release with no changelog section; it
-        // never points at the GitHub release, which is not a changelog either.
+        // only on a local invocation - a manual publish, or a manual re-run of a failed
+        // one - where the fallback applies. That can be a stable release as easily as a
+        // pre-release, so the text is neutral about which; it points at the changelog,
+        // never at the GitHub release, which is not a changelog either.
         changelog.set(
             providers.fileContents(layout.buildDirectory.file("release-notes.md")).asText
-                .orElse("No changelog section was written for this pre-release.")
+                .orElse("See CHANGELOG.md for this version.")
         )
 
         platforms {
@@ -356,7 +357,8 @@ tasks {
         //
         // net.kyori -> ...lib.kyori
         //   The WHOLE net.kyori prefix, and deliberately wider than the two artifacts #19
-        //   names. Resolution pulls 17 net.kyori modules. Relocating only
+        //   names. Resolution pulls 18 net.kyori modules (plus adventure-bom,
+        //   a constraint with no classes; THIRD_PARTY_NOTICES.md lists all 18). Relocating only
         //   adventure-platform-bukkit and adventure-text-minimessage would leave
         //   adventure-api, adventure-key, adventure-nbt, the serializers,
         //   adventure-platform-{api,facet} and net.kyori.examination sitting unrelocated at
@@ -442,6 +444,26 @@ tasks {
                 }
                 requireSingleNotice("META-INF/LICENSE")
                 requireSingleNotice("META-INF/THIRD_PARTY_NOTICES.md")
+
+                // And byte-for-byte the files in the repository root. Exactly-once proves
+                // there is one entry by that name, not that it is ours: a dependency's
+                // META-INF/LICENSE written in place of the from() copy would pass the count
+                // and ship the wrong notice.
+                fun requireSameBytes(entry: String, source: File) {
+                    val packaged = zip.getInputStream(zip.getEntry(entry)).use { it.readBytes() }
+                    if (!packaged.contentEquals(source.readBytes())) {
+                        throw GradleException(
+                            "Licence notice $entry in the jar does not match ${source.name} in " +
+                                "the repository root byte for byte. Something other than the " +
+                                "project's own file was packaged under that name."
+                        )
+                    }
+                }
+                requireSameBytes("META-INF/LICENSE", layout.projectDirectory.file("LICENSE").asFile)
+                requireSameBytes(
+                    "META-INF/THIRD_PARTY_NOTICES.md",
+                    layout.projectDirectory.file("THIRD_PARTY_NOTICES.md").asFile
+                )
 
                 // The service files are the half that fails silently at runtime, so they are
                 // checked by name AND by content.
