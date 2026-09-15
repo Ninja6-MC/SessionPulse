@@ -132,7 +132,9 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     # A hung JVM is caught by the script's own BOOT_TIMEOUT, but a hung download is not.
-    timeout-minutes: 25
+    # 30 rather than 25 since the bot legs: the scripted session is about seven minutes of
+    # wall clock on top of the boot, plus a cold Gradle build of the bot fixture.
+    timeout-minutes: 30
 
     strategy:
       # Paper and Folia fail for different reasons, and seeing both results is the point.
@@ -158,29 +160,80 @@ jobs:
         # rather than breaking the boot. That is a real limitation of the four-platform
         # claim on the newest servers, it needs measuring rather than guessing, and it
         # belongs to the compatibility issues.
+        #
+        # `bot: true` turns a leg into the gameplay smoke test: a protocol client joins and
+        # the script asserts the milestone, the kick and the cooldown from what it received.
+        # Only the 1.21.11 legs, because MCProtocolLib is pinned to that one protocol; the
+        # 1.20.4 legs stay boot-only, which is also what keeps their shipped-config checks.
+        # The labels are the check names and must not change - see N6-CI-03 above.
         include:
           - label: 'paper 1.20.4'
             platform: paper
             minecraft: '1.20.4'
             java: '21'
+            bot: false
           - label: 'folia 1.20.4'
             platform: folia
             minecraft: '1.20.4'
             java: '21'
+            bot: false
           - label: 'paper 1.21.11'
             platform: paper
             minecraft: '1.21.11'
             java: '21'
+            bot: true
           - label: 'folia 1.21.11'
             platform: folia
             minecraft: '1.21.11'
             java: '21'
+            bot: true
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      # The bot fixture is built HERE, in the bot legs, and not in the build job. It pulls
+      # an MCProtocolLib SNAPSHOT from repo.opencollab.dev, and the build job is the
+      # required Build and Test check: a third-party snapshot host being down must not be
+      # able to block every merge. These legs are advisory, so they carry that risk
+      # instead. The wrapper is validated first for the same reason as in the build job,
+      # with the same retry.
+      - name: Validate Gradle Wrapper
+        id: wrapper
+        if: matrix.bot
+        continue-on-error: true
+        uses: gradle/actions/wrapper-validation@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+
+      - name: Wait Before Revalidating
+        if: matrix.bot && steps.wrapper.outcome == 'failure'
+        run: sleep 15
+
+      - name: Validate Gradle Wrapper (retry)
+        if: matrix.bot && steps.wrapper.outcome == 'failure'
+        uses: gradle/actions/wrapper-validation@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+
+      # Gradle's JDK, set up before the server's below so that the later step leaves
+      # JAVA_HOME and PATH pointing at matrix.java for the server and the bot.
+      - name: Set up Java 21 for Gradle
+        if: matrix.bot
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        if: matrix.bot
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+
+      # botClientJar is not wired into build, check or test, so this compiles only the bot
+      # source set and its dependencies - not the plugin, which comes from the artifact.
+      - name: Build Bot Fixture
+        if: matrix.bot
+        run: |
+          chmod +x ./gradlew
+          ./gradlew botClientJar --no-daemon
 
       # `java` here is the version the SERVER runs on, not the one the plugin is built
       # with. The jar stays Java 21 bytecode, which a newer runtime accepts.
@@ -198,7 +251,7 @@ jobs:
           name: SessionPulse-SNAPSHOT
           path: dist
 
-      - name: Boot Server and Verify Plugin Loads
+      - name: Boot Server and Run Smoke Test
         run: |
           chmod +x .github/scripts/smoke-test.sh
           # The upload step's denylist already excludes the thin, sources and javadoc
@@ -214,14 +267,29 @@ jobs:
             exit 1
           fi
           echo "Booting with $JAR"
+          # A fixed, unversioned name set by the Gradle task, checked for the same reason as
+          # the plugin jar above: an empty BOT_JAR would silently turn a bot leg back into
+          # a boot-only leg that still reports green.
+          if [ "${{ matrix.bot }}" = "true" ]; then
+            BOT_JAR="build/test-fixtures/SessionPulseProbeBot.jar"
+            if [ ! -f "$BOT_JAR" ]; then
+              echo "::error::The bot fixture was not built at $BOT_JAR."
+              exit 1
+            fi
+            export BOT_JAR
+          fi
           .github/scripts/smoke-test.sh "${{ matrix.platform }}" "${{ matrix.minecraft }}" "$JAR"
 
-      # if: always(), because the log is most wanted on the runs that failed.
+      # if: always(), because the log is most wanted on the runs that failed. The bot logs
+      # are the evidence for every gameplay assertion, so they travel with the server log;
+      # boot-only legs have none, and the glob matching nothing is not an error.
       - name: Upload Server Log
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: boot-log-${{ matrix.platform }}-${{ matrix.minecraft }}
-          path: run-${{ matrix.platform }}/server.log
+          path: |
+            run-${{ matrix.platform }}/server.log
+            run-${{ matrix.platform }}/bot-*.log
           retention-days: 7
           if-no-files-found: warn
