@@ -40,20 +40,28 @@ import java.util.function.Supplier;
  *       data and is never read on the tick. An exempt player's claim is consumed for this
  *       connection, as a reminder's is; losing the permission takes effect on the next one.</li>
  *   <li><b>The configuration again.</b> A reload between the claim and this task may have
- *       switched enforcement off. The claim is given back rather than kept, so switching it on
- *       again reaches a player who never left.</li>
- *   <li><b>Still the live session.</b> A quit or an admin reset in between replaced it; the
+ *       switched enforcement off, or raised {@code at-minutes} past the window that was
+ *       claimed. Either way the claim is given back rather than kept, so a later tick that
+ *       really is over the limit in force can still claim it.</li>
+ *   <li><b>Still the live session.</b> A quit or a window reset in between replaced it; the
  *       player is leaving or starting over, and nothing is written for them.</li>
+ *   <li><b>The cooldown</b>, before anything touches the window. Storage keeps the two apart
+ *       - a save never touches the cooldown and a cooldown never touches the window - so the
+ *       order in memory is the only thing deciding what a flush can catch. With the cooldown
+ *       first, any flush that carries the zeroed window carries the expiry too. The other way
+ *       round, a periodic flush between the two could store a window of zero with no
+ *       cooldown, and a crash then would hand back a fresh allowance with no break.</li>
  *   <li><b>The window is reset and checkpointed.</b> The enforced break is what ends the
  *       counted window. Without it the cooldown would end the break but not the over-limit
  *       state: a rejoin inside {@code window-reset-hours} carries the window, the first tick
  *       claims again, and the player is back out with a fresh cooldown - a boot loop with a
- *       thirty-minute period. Lifetime is carried across.</li>
- *   <li><b>The cooldown</b>, whose forced flush is what reaches the disk. Storage keeps the
- *       two apart - a save never touches the cooldown and a cooldown never touches the
- *       window - so that one write carries both the zeroed window and the expiry. A crash
- *       straight after the kick can therefore restore neither the old window nor a missing
- *       cooldown.</li>
+ *       thirty-minute period. Lifetime is carried across. If the session vanished between
+ *       the check and the reset, the cooldown already written stands against the old window:
+ *       the worst case is one extra kick once it lapses, never a missed break.</li>
+ *   <li><b>A flush is requested</b> explicitly. The cooldown's own forced flush may already
+ *       have run on another thread before the checkpoint, and the zeroed window must not wait
+ *       for the periodic one: a crash in between would restore the old window, and the player
+ *       would be kicked once more after the cooldown.</li>
  *   <li><b>The disconnect</b>, last. The cooldown is already in memory, so a reconnect the
  *       kick races can never reach the login gate ahead of it.</li>
  * </ol>
@@ -71,7 +79,7 @@ import java.util.function.Supplier;
  *   <li>Paper and Folia deliver the quit some time after {@code kickPlayer} returns. A tick in
  *       between sees the fresh session at a window of zero minutes, which reaches no
  *       milestone, no overtime point and no threshold, so it claims nothing.</li>
- *   <li>The checkpoint shares a pre-existing race with the admin reset: a quit landing
+ *   <li>The checkpoint shares a pre-existing race with any window reset: a quit landing
  *       between the {@code isLive} test and the save can overwrite the quit's final figure
  *       with the reset one. Not introduced here, and not fixed here.</li>
  *   <li>A player gone before the region task runs is not disconnected and has no cooldown
@@ -135,23 +143,27 @@ public final class EnforcementService implements SessionObserver {
             return;
         }
         PluginConfig current = config.get();
-        if (current == null || !current.enforcement().enabled()) {
+        // The claim was judged against the file in force on the tick; this is the one in
+        // force now. Truncated minutes, the boundary the claim itself used.
+        if (current == null || !current.enforcement().enabled()
+                || windowSeconds / 60L < current.enforcement().atMinutes()) {
             session.releaseEnforcement();
             return;
         }
         if (tracker.session(uuid) != session) {
             return;
         }
+        EnforcementPolicy policy = current.enforcement();
+        long cooldownMinutes = policy.cooldownMinutes();
+        storage.setCooldown(uuid, name,
+                clock.wallMillis() + cooldownMinutes * MILLIS_PER_MINUTE);
+
         PlayerSession fresh = tracker.resetWindow(uuid);
         if (fresh == null) {
             return;
         }
         tracker.checkpoint(fresh);
-
-        EnforcementPolicy policy = current.enforcement();
-        long cooldownMinutes = policy.cooldownMinutes();
-        storage.setCooldown(uuid, name,
-                clock.wallMillis() + cooldownMinutes * MILLIS_PER_MINUTE);
+        storage.flushAsync();
 
         player.kickPlayer(notifier.legacy(policy.kickMessage(), Placeholders.none()
                 .player(name)

@@ -100,6 +100,20 @@ class LoginGateListenerTest {
     }
 
     @Test
+    @DisplayName("<hours> and <minutes> on the refusal are at-minutes, the limit that was reached")
+    void hoursAndMinutesAreTheLimit() {
+        config = parse("""
+                enforcement:
+                  enabled: true
+                  at-minutes: 90
+                  kick-message: "<yellow><player> <hours>h <minutes>m, back in <cooldown></yellow>"
+                """);
+        storage.setCooldown(uuid, "Ada", NOW + 60_000L);
+
+        assertEquals("§eAda 1.5h 90m, back in 1", preLogin().getKickMessage());
+    }
+
+    @Test
     @DisplayName("a cooldown expiring exactly now has lapsed")
     void expiringNowAdmitted() {
         storage.setCooldown(uuid, "Ada", NOW);

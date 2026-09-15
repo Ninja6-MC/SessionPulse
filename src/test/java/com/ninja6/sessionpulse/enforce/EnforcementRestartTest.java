@@ -1,9 +1,29 @@
 package com.ninja6.sessionpulse.enforce;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.ninja6.sessionpulse.config.PluginConfig;
+import com.ninja6.sessionpulse.notify.TestNotifiers;
+import com.ninja6.sessionpulse.platform.Scheduler;
 import com.ninja6.sessionpulse.session.PlayerSession;
+import com.ninja6.sessionpulse.session.SessionSnapshot;
+import com.ninja6.sessionpulse.session.SessionStore;
+import com.ninja6.sessionpulse.session.SessionTracker;
+import com.ninja6.sessionpulse.storage.YamlDataStorage;
+import java.io.IOException;
+import java.io.StringReader;
+import java.io.UncheckedIOException;
+import java.lang.reflect.Proxy;
+import java.nio.file.Files;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+import java.util.logging.Logger;
+import org.bukkit.configuration.file.YamlConfiguration;
+import org.bukkit.entity.Entity;
+import org.bukkit.entity.Player;
 import java.nio.file.Path;
 import java.time.Duration;
 import org.bukkit.event.player.AsyncPlayerPreLoginEvent;
@@ -41,11 +61,12 @@ class EnforcementRestartTest {
     private static void assertHeldOutThenFresh(EnforceFixture next) {
         AsyncPlayerPreLoginEvent refused = next.preLogin();
         assertEquals(Result.KICK_OTHER, refused.getLoginResult());
-        assertTrue(refused.getKickMessage().startsWith("§eBreak Ada "), refused.getKickMessage());
-        assertTrue(refused.getKickMessage().endsWith(" 30"), refused.getKickMessage());
+        assertEquals("§eBreak Ada 4.0 240 30", refused.getKickMessage(),
+                "hours and minutes are the limit reached, not the reset window's zero");
 
         next.clock.advanceWallOnly(Duration.ofMinutes(10));
-        assertTrue(next.preLogin().getKickMessage().endsWith(" 20"), "twenty minutes left");
+        assertEquals("§eBreak Ada 4.0 240 20", next.preLogin().getKickMessage(),
+                "twenty minutes left");
 
         // Past the cooldown, far short of window-reset-hours.
         next.clock.advanceWallOnly(Duration.ofMinutes(20).plusMillis(1));
@@ -70,13 +91,124 @@ class EnforcementRestartTest {
     }
 
     @Test
-    @DisplayName("crash after the kick: only setCooldown's flush ran, and it carried both")
+    @DisplayName("crash after the kick with only the one-shot flush run: it carried both")
     void crashAfterCooldownFlush() {
         EnforceFixture f = kicked();
-        assertEquals(1, f.scheduler.runOnce(), "the one forced flush the cooldown asked for");
+        assertEquals(1, f.scheduler.runOnce(),
+                "the cooldown's and the checkpoint's requests collapse into one queued flush");
         // No quit, no shutdown: the process is gone.
 
         assertHeldOutThenFresh(f.restart());
+    }
+
+    @Test
+    @DisplayName("a flush after any save: no write the disk sees has a zeroed window without its cooldown")
+    void flushAfterEverySaveNeverStoresZeroWindowWithoutCooldown() {
+        diskVersionsThroughOneKick(true);
+    }
+
+    @Test
+    @DisplayName("the cooldown's flush already ran: the zeroed window still reaches disk before the kick")
+    void zeroedWindowFlushedEvenAfterCooldownFlushRan() {
+        diskVersionsThroughOneKick(false);
+    }
+
+    /**
+     * Drives one kick with every one-shot flush run inline, and checks every version of the
+     * file that resulted. With {@code flushOnEverySave} a flush also follows each tracker save,
+     * standing in for a periodic flush landing at the worst moment; without it the cooldown's
+     * own flush has already run before the checkpoint, so only the explicit request can carry
+     * the zeroed window.
+     */
+    private void diskVersionsThroughOneKick(boolean flushOnEverySave) {
+        List<String> versions = new ArrayList<>();
+        Path file = dir.resolve("data.yml");
+        EnforceFixture.Clock clock = new EnforceFixture.Clock();
+        PluginConfig config = EnforceFixture.parse(EnforceFixture.ENABLED);
+        YamlDataStorage[] holder = new YamlDataStorage[1];
+        // Every one-shot runs at once and every result is kept, so each flush the region task
+        // provokes is a separate crash point.
+        Scheduler inline = new Scheduler() {
+            @Override
+            public Task globalRepeating(Runnable task, long delayTicks, long periodTicks) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public void entity(Entity entity, Runnable task, Runnable retired) {
+                task.run();
+            }
+
+            @Override
+            public Task async(Runnable task, long delayTicks, long periodTicks) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public void asyncOnce(Runnable task) {
+                task.run();
+                try {
+                    versions.add(Files.exists(file) ? Files.readString(file) : "");
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            }
+        };
+        Logger logger = Logger.getAnonymousLogger();
+        logger.setUseParentHandlers(false);
+        YamlDataStorage storage = new YamlDataStorage(file, inline, () -> config, logger);
+        holder[0] = storage;
+        storage.loadFromDisk();
+        // A periodic flush after every save the tracker makes: the worst moment it could land.
+        SessionStore flushingStore = new SessionStore() {
+            @Override
+            public SessionSnapshot load(UUID uuid) {
+                return holder[0].load(uuid);
+            }
+
+            @Override
+            public void save(UUID uuid, SessionSnapshot snapshot) {
+                holder[0].save(uuid, snapshot);
+                if (flushOnEverySave) {
+                    holder[0].flushAsync();
+                }
+            }
+        };
+        SessionTracker tracker = new SessionTracker(() -> config, clock, flushingStore);
+        EnforcementService service = new EnforcementService(tracker, inline,
+                TestNotifiers.recording(() -> config, new TestNotifiers.RecordingAudience()),
+                storage, clock, () -> config);
+        UUID uuid = UUID.randomUUID();
+        List<String> kicks = new ArrayList<>();
+        Player player = (Player) Proxy.newProxyInstance(Player.class.getClassLoader(),
+                new Class<?>[] {Player.class}, (proxy, method, args) -> switch (method.getName()) {
+                    case "hasPermission" -> false;
+                    case "kickPlayer" -> kicks.add((String) args[0]);
+                    case "getUniqueId" -> uuid;
+                    default -> throw new UnsupportedOperationException(method.getName());
+                });
+
+        tracker.onJoin(uuid, "Ada");
+        clock.advance(Duration.ofMinutes(239));
+        tracker.checkpoint(tracker.accrue(uuid, false));
+        clock.advance(Duration.ofMinutes(1));
+        versions.clear();
+        service.afterAccrual(player, tracker.accrue(uuid, false));
+
+        assertEquals(1, kicks.size());
+        assertFalse(versions.isEmpty());
+        for (String version : versions) {
+            YamlConfiguration yaml = YamlConfiguration.loadConfiguration(new StringReader(version));
+            String path = "players." + uuid + ".";
+            if (yaml.getLong(path + "window-seconds") < 240 * 60L) {
+                assertTrue(yaml.getLong(path + "cooldown-expires") > 0L,
+                        "a crash here restores a fresh allowance with no break:\n" + version);
+            }
+        }
+        String last = versions.get(versions.size() - 1);
+        YamlConfiguration finalYaml = YamlConfiguration.loadConfiguration(new StringReader(last));
+        assertEquals(0L, finalYaml.getLong("players." + uuid + ".window-seconds"),
+                "the zeroed window reaches the disk before the kick, not at the next flush");
     }
 
     @Test

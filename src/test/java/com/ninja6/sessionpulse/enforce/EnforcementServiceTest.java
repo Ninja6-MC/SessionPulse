@@ -170,6 +170,45 @@ class EnforcementServiceTest {
     }
 
     @Test
+    @DisplayName("claimed, at-minutes raised by reload before the region runs: released, kicked later")
+    void raisedThresholdBetweenClaimAndRegionReleasesClaim() {
+        EnforceFixture f = enabled();
+        PlayerSession session = f.join();
+        f.scheduler.deferEntity = true;
+
+        f.tick(Duration.ofMinutes(240));
+        f.config = EnforceFixture.parse(
+                EnforceFixture.ENABLED.replace("at-minutes: 240", "at-minutes: 300"));
+        f.scheduler.runEntity();
+
+        assertTrue(f.kicks.isEmpty(), "kicked under a limit the file in force no longer sets");
+        assertEquals(0L, f.storage.cooldownExpiresMillis(f.id()));
+        assertEquals(session, f.tracker.session(f.id()), "nothing reset");
+
+        f.scheduler.deferEntity = false;
+        f.tick(Duration.ofMinutes(59));
+        assertTrue(f.kicks.isEmpty());
+        f.tick(Duration.ofMinutes(1));
+        assertEquals(1, f.kicks.size(), "a claim kept after the raise would never kick at 300");
+    }
+
+    @Test
+    @DisplayName("claimed, then the window is reset before the region runs: no cooldown, no kick")
+    void windowResetBetweenClaimAndRegion() {
+        EnforceFixture f = enabled();
+        f.join();
+        f.scheduler.deferEntity = true;
+
+        f.tick(Duration.ofMinutes(240));
+        PlayerSession replaced = f.tracker.resetWindow(f.id());
+        f.scheduler.runEntity();
+
+        assertTrue(f.kicks.isEmpty());
+        assertEquals(0L, f.storage.cooldownExpiresMillis(f.id()));
+        assertEquals(replaced, f.tracker.session(f.id()), "the reset's session is left alone");
+    }
+
+    @Test
     @DisplayName("a new connection whose stored window is over the limit is kicked on its first tick")
     void storedWindowOverLimitKickedOnFirstTick() {
         EnforceFixture f = enabled();

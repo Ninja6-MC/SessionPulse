@@ -19,7 +19,7 @@ import java.util.function.Supplier;
  * them away from there is a second disconnect screen after a loading screen. Pre-login runs
  * off the server thread, on the connection's own, which is why everything here is an
  * in-memory read - {@link DataStorage#cooldownExpiresMillis} is a map lookup of an immutable
- * record, and {@link Notifier#legacy} is a static serializer with no open or close state.
+ * record, and {@link Notifier#legacy} renders without touching a player or audience.
  *
  * <p>{@link EventPriority#HIGH}, so a whitelist or ban plugin at the default priority has
  * already spoken, and a connection somebody else refused is left exactly as they left it.
@@ -28,6 +28,10 @@ import java.util.function.Supplier;
  * <p>With {@code enforcement.enabled: false} everybody is admitted, cooldown or not. Turning
  * enforcement off is the operator's release valve, and it has to open the door for the
  * players already outside it; the cooldowns stay on record and do nothing.
+ *
+ * <p>The refusal is the kick message again. {@code <cooldown>} is the time left;
+ * {@code <hours>} and {@code <minutes>} are {@code at-minutes}, the limit that was reached,
+ * because the stored window has been reset to zero by then and would read as nothing.
  *
  * <p>There is no {@code sessionpulse.exempt} check, because there is no player to ask before
  * login. None is needed: a cooldown is only ever written for a player who was not exempt
@@ -82,9 +86,12 @@ public final class LoginGateListener implements Listener {
         // Up to whole seconds here, then up to whole minutes in the placeholder, so a player
         // with a millisecond left is told one minute rather than none.
         long remainingSeconds = (expires - now + 999L) / 1000L;
+        long limitSeconds = current.enforcement().atMinutes() * 60L;
         event.disallow(AsyncPlayerPreLoginEvent.Result.KICK_OTHER,
                 notifier.legacy(current.enforcement().kickMessage(), Placeholders.none()
                         .player(event.getName())
+                        .hours(limitSeconds)
+                        .minutes(limitSeconds)
                         .cooldown(remainingSeconds)));
     }
 }
