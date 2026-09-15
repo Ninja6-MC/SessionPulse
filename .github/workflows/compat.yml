@@ -8,8 +8,8 @@ name: Latest Server Compatibility
 #
 # "Newest" is the newest *version* that is not a release candidate or pre-release, and
 # NOT the newest stable build. Those are different things on fill: a version can exist
-# with no STABLE build at all. On 2026-09-15 this resolves Paper 26.3, whose only build is
-# ALPHA, and Folia 26.2, whose builds are all BETA. Waiting for STABLE would test servers
+# with no STABLE build at all - when this workflow was added it resolved Paper 26.3, whose
+# only build was ALPHA, and Folia 26.2, whose builds were all BETA. Waiting for STABLE would test servers
 # people already run a month late, so the run takes whatever build channel the version
 # has, and writes that channel to the job summary next to the version and the Java it ran
 # on, so a red run on an ALPHA build reads as what it is.
@@ -123,8 +123,9 @@ jobs:
               ;;
           esac
 
-          # Informational only: the smoke test downloads builds/latest itself, whatever
-          # its channel. An empty field is reported rather than failed on.
+          # Reported, not filtered on: the smoke test downloads builds/latest itself,
+          # whatever its channel. An empty field reads as `unknown`, but a request that
+          # fails outright fails this step, since the smoke test would fail on the same URL.
           CHANNEL="$(curl -fsSL --retry 3 --retry-delay 5 -m 60 "$API/versions/$VERSION/builds/latest" \
             | jq -r '.channel // empty')"
           CHANNEL="${CHANNEL:-unknown}"
