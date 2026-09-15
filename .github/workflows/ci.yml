@@ -200,7 +200,7 @@ jobs:
 
       - name: Boot Server and Verify Plugin Loads
         run: |
-          chmod +x .github/scripts/boot-test.sh
+          chmod +x .github/scripts/smoke-test.sh
           # The upload step's denylist already excludes the thin, sources and javadoc
           # jars, so this yields exactly one file. The exclusions are repeated anyway: a
           # future archive task that slipped past the denylist would otherwise be booted
@@ -214,7 +214,7 @@ jobs:
             exit 1
           fi
           echo "Booting with $JAR"
-          .github/scripts/boot-test.sh "${{ matrix.platform }}" "${{ matrix.minecraft }}" "$JAR"
+          .github/scripts/smoke-test.sh "${{ matrix.platform }}" "${{ matrix.minecraft }}" "$JAR"
 
       # if: always(), because the log is most wanted on the runs that failed.
       - name: Upload Server Log

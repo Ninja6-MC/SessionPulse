@@ -182,7 +182,7 @@ class PluginConfigTest {
     @Test
     @DisplayName("every warning opens with the key it is about")
     void everyWarningOpensWithTheKeyItIsAbout() {
-        // .github/scripts/boot-test.sh greps the server log for exactly this shape to catch
+        // .github/scripts/smoke-test.sh greps the server log for exactly this shape to catch
         // a shipped config.yml that produced any warning at all. An alternation of warning
         // texts there could not be kept in step with this class - it silently fell behind
         // and caught half of them - so the boot leg matches on the key instead, and this
@@ -224,7 +224,7 @@ class PluginConfigTest {
                 seen++;
                 assertTrue(warning.matches("^(tracking|reminders|enforcement)\\.[a-z-]+.*"),
                         "Every warning must open with the config key it is about, because "
-                                + "boot-test.sh matches on that shape: " + warning);
+                                + "smoke-test.sh matches on that shape: " + warning);
             }
         }
         assertTrue(seen >= malformed.size(), "expected at least one warning per case");
