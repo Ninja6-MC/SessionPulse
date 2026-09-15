@@ -397,6 +397,37 @@ public final class SessionTracker {
     }
 
     /**
+     * Claims the enforced disconnect, if the counted window has reached
+     * {@code enforcement.at-minutes} and it is not claimed yet on this connection.
+     *
+     * <p>The same shape as {@link #claimDue}: decided here on the tick, returned only by the
+     * call whose {@link PlayerSession#claimEnforcement} won, and nothing for a detached
+     * session, checked again after the claim. Reached is {@code windowMinutes >= atMinutes},
+     * the boundary milestones use, so a disconnect at 240 and a milestone at 240 agree about
+     * the minute.
+     *
+     * <p>Nothing is seeded, at join or at reload. A player whose stored window is already
+     * over the limit is claimed on their first tick, and enabling enforcement by reload
+     * claims everybody already past it on the next one. That is the point of the feature,
+     * not an alert that should have been suppressed.
+     *
+     * <p>The claim does nothing by itself. The exemption, the cooldown and the disconnect all
+     * belong to the player's region task, because none of them may run on the global tick.
+     *
+     * @param session       the player's live session, with this tick already credited
+     * @param windowMinutes {@code session.windowMinutes()}, read once by the caller
+     * @return {@code true} if the caller should schedule the disconnect now
+     */
+    public boolean claimEnforcement(PlayerSession session, long windowMinutes) {
+        PluginConfig current = config.get();
+        if (current == null || !current.enforcement().enabled()
+                || windowMinutes < current.enforcement().atMinutes() || !isLive(session)) {
+            return false;
+        }
+        return session.claimEnforcement() && isLive(session);
+    }
+
+    /**
      * Stores one player's counted state now, rather than at the next periodic flush.
      *
      * <p>For a milestone or overtime claim. Neither the fired set nor the overtime minute is

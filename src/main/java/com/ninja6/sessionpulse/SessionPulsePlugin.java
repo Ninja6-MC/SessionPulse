@@ -4,6 +4,8 @@ import com.ninja6.sessionpulse.afk.AfkService;
 import com.ninja6.sessionpulse.afk.BuiltInAfkDetector;
 import com.ninja6.sessionpulse.afk.EssentialsLookup;
 import com.ninja6.sessionpulse.config.PluginConfig;
+import com.ninja6.sessionpulse.enforce.EnforcementService;
+import com.ninja6.sessionpulse.listeners.LoginGateListener;
 import com.ninja6.sessionpulse.listeners.PlayerActivityListener;
 import com.ninja6.sessionpulse.listeners.PlayerConnectionListener;
 import com.ninja6.sessionpulse.reminder.ReminderObserver;
@@ -126,6 +128,10 @@ public class SessionPulsePlugin extends JavaPlugin {
         }
         getServer().getPluginManager()
                 .registerEvents(new PlayerConnectionListener(tracker, storage::flushAsync), this);
+        // After loadFromDisk, which is what makes a cooldown written before a restart visible
+        // to the first connection after it.
+        getServer().getPluginManager()
+                .registerEvents(new LoginGateListener(storage, clock, this::config, notifier), this);
         // Before the first resolve, so an EssentialsX disabled between the two is seen.
         getServer().getPluginManager().registerEvents(new PlayerActivityListener(afk), this);
         afk.resolve();
@@ -136,12 +142,15 @@ public class SessionPulsePlugin extends JavaPlugin {
 
         // The service is the gate, not the detector it holds, so a resolve reaches the tick
         // without a reschedule. Milestones and overtime share the first observer; enforcement
-        // adds its own. storage::flushAsync, so a claimed reminder reaches disk ahead of the
-        // periodic flush and a crash cannot refire it.
+        // is the second. storage::flushAsync, so a claimed reminder reaches disk ahead of the
+        // periodic flush and a crash cannot refire it. Reminders first, so a milestone on the
+        // disconnect minute is handed to the region ahead of the kick.
         SessionObserver reminders =
                 new ReminderObserver(tracker, scheduler, notifier, storage::flushAsync);
+        SessionObserver enforcement =
+                new EnforcementService(tracker, scheduler, notifier, storage, clock, this::config);
         this.sessionTick = scheduler.globalRepeating(
-                new SessionTickTask(tracker, afk, List.of(reminders), getLogger()),
+                new SessionTickTask(tracker, afk, List.of(reminders, enforcement), getLogger()),
                 SessionTickTask.DELAY_TICKS, SessionTickTask.PERIOD_TICKS);
 
         getLogger().info("SessionPulse enabled (scheduler: " + scheduler.platformName() + ").");

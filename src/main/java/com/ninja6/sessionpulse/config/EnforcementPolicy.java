@@ -16,10 +16,11 @@ package com.ninja6.sessionpulse.config;
  * @param kickMessage     MiniMessage shown on the disconnect screen, never {@code null}.
  *                        Rendered through {@code notify.Notifier#legacy}, because
  *                        {@code Player#kickPlayer} is String-only on spigot-api
- * @param cooldownMinutes minutes before the player may rejoin. Clamped to {@code 1-1440}:
- *                        a zero would let them reconnect still over the limit and be
- *                        kicked again immediately, which is a boot loop rather than a
- *                        disabled cooldown. Turning enforcement off is how you disable it
+ * @param cooldownMinutes minutes before the player may rejoin. Clamped to {@code 1-1440}.
+ *                        The disconnect resets the counted window, so the cooldown is the
+ *                        whole of the enforced break; a zero would be no break at all, and
+ *                        the player could reconnect at once to a fresh allowance. Turning
+ *                        enforcement off is how you disable it
  */
 public record EnforcementPolicy(boolean enabled,
                                 int atMinutes,

@@ -52,8 +52,12 @@ import java.util.List;
  */
 public final class ReminderObserver implements SessionObserver {
 
-    /** Holders never receive a milestone or a reminder. Declared in {@code plugin.yml}. */
-    static final String EXEMPT_PERMISSION = "sessionpulse.exempt";
+    /**
+     * Holders never receive a milestone or a reminder, and are never disconnected. Declared
+     * in {@code plugin.yml}. Public so enforcement reads this one constant rather than a second
+     * copy of the string that could drift from it.
+     */
+    public static final String EXEMPT_PERMISSION = "sessionpulse.exempt";
 
     private final SessionTracker tracker;
     private final Scheduler scheduler;
