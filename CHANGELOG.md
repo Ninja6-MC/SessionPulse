@@ -145,6 +145,10 @@ adheres to [Semantic Versioning](https://semver.org/).
 - `META-INF/LICENSE` and `META-INF/THIRD_PARTY_NOTICES.md` in the plugin jar, carrying
   the MIT notices of the shaded Adventure, adventure-platform, examination, option and
   FoliaLib components. The build fails unless each is present exactly once.
+- The release workflow syncs the Hangar resource page from `docs/store-description.md`
+  after the Hangar version upload, and fails the job, with the version still published,
+  when Hangar does not hold the synced text afterwards. `HANGAR_API_TOKEN` needs the
+  `edit_page` permission as well as `create_version`.
 - `scripts/store-description.py`, which generates `docs/store-description.md`, the
   Modrinth and Hangar project description, from `README.md`. It strips the GitHub-only
   chrome and the download row, absolutises relative links and reference-style link

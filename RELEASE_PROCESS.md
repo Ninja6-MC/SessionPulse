@@ -141,6 +141,8 @@ GitHub Actions (`.github/workflows/release.yml`) will:
 9. Publish to Modrinth and to Paper Hangar. Once the GitHub release exists the two
    registries are independent: a Modrinth failure fails the run but does not stop the
    Hangar step.
+10. Sync the Hangar resource page from `docs/store-description.md`, in the Hangar step
+    and only after its version upload succeeded. See [Store Descriptions](#store-descriptions).
 
 **Requires Java 21.** The plugin is built for Java 21 and declares it on Modrinth; every
 server must run on Java 21 or newer to load it, including 1.20.4-1.20.6, which
@@ -155,10 +157,15 @@ Add the registry tokens after that run, not before.
 
 ### Repository Secrets
 
-| Secret | Used by | Publishing is skipped if absent |
-| :--- | :--- | :--- |
-| `MODRINTH_TOKEN` | Modrinth step (`mc-publish`) | Yes |
-| `HANGAR_API_TOKEN` | Hangar step (`publishPluginPublicationToHangar`) | Yes |
+| Secret | Used by | Permissions | Publishing is skipped if absent |
+| :--- | :--- | :--- | :--- |
+| `MODRINTH_TOKEN` | Modrinth step (`mc-publish`) | | Yes |
+| `HANGAR_API_TOKEN` | Hangar step (`publishPluginPublicationToHangar`, then `syncPluginPublicationMainResourcePagePageToHangar`) | `create_version` and `edit_page` | Yes |
+
+A Hangar API key holding only `create_version` still uploads the version, but Hangar
+rejects the page sync that follows. That fails the job whenever the page text changed;
+when it did not, the only sign is an `Error using endpoint` line in the step log. Replace
+the key with one holding both permissions before the first release that runs the sync.
 
 Neither is required for a release to succeed. Without them the workflow still tests,
 builds and publishes to GitHub Releases, and simply skips the registry it has no token
@@ -182,7 +189,12 @@ Set them only if a registry project is created under a different slug.
 Publishing is **not atomic**. The GitHub release is created first; after it, the Modrinth
 and Hangar steps are independent of each other, and whatever succeeded stays published.
 
-**Prefer "Re-run failed jobs"** on the failed workflow run. The job runs again from the
+**If only the Hangar page sync failed**, the version is already published: go straight to
+the manual sync command under *Hangar resource page* below. A re-run fails at the
+duplicate Hangar upload and never reaches the sync, and it would also replace the jar and
+`.sha256` on the GitHub release.
+
+Otherwise, **prefer "Re-run failed jobs"** on the failed workflow run. The job runs again from the
 start on a fresh runner: it re-tests and rebuilds the jar there, replaces the jar and
 `.sha256` on the GitHub release with the rebuilt pair, and tries both registries again.
 The registry that succeeded the first time rejects the duplicate version and that step
@@ -200,6 +212,10 @@ If a re-run is not possible, publish the failed registry by hand:
   The task rebuilds the jar locally, so the bytes uploaded to Hangar will not match the
   `.sha256` on the GitHub release. Without `build/release-notes.md` the Hangar changelog
   falls back to "No changelog section was written for this pre-release."
+* **Hangar resource page:** a failed page sync leaves the version published; a re-run
+  would stop at the rejected duplicate upload before reaching the sync. From a checkout
+  of the tagged commit, with `HANGAR_API_TOKEN` set, run
+  `./gradlew syncPluginPublicationMainResourcePagePageToHangar -PhangarProject=<HANGAR_PROJECT or SessionPulse>`.
 
 The Minecraft versions declared to both registries are one explicit list, kept in
 `build.gradle.kts` (`releaseGameVersions`) and in `release.yml` (`game-versions`): 1.20.4
@@ -207,10 +223,10 @@ to 1.20.6 and 1.21 to 1.21.11. Edit both together.
 
 ### Store Descriptions
 
-The project descriptions on Modrinth and Hangar are not written by the release workflow.
-Both are generated from `README.md` into `docs/store-description.md` by
-`scripts/store-description.py`, and CI fails when the committed file is out of date with
-the README or breaks the store content checks. Edit the README, run
+Both project descriptions are generated from `README.md` into
+`docs/store-description.md` by `scripts/store-description.py`, and CI fails when the
+committed file is out of date with the README or breaks the store content checks. Edit
+the README, run
 `python scripts/store-description.py`, and commit both files together.
 
 * **Modrinth** is a manual paste. `mc-publish` uploads versions and their changelogs and
@@ -218,6 +234,12 @@ the README or breaks the store content checks. Edit the README, run
   `docs/store-description.md` into the project's description editor on Modrinth.
   Editing a description does **not** re-enter the review queue: if the project was
   rejected, fix the description and then use *Resubmit for review*, or it stays rejected.
-* **Hangar** is currently also pasted by hand, the same text into the resource page.
-  Syncing it from the release workflow is tracked in
-  [#67](https://github.com/Ninja6-MC/SessionPulse/issues/67).
+* **Hangar** is written by the release workflow. After the version upload, the Hangar
+  step runs `syncPluginPublicationMainResourcePagePageToHangar`, which sends
+  `docs/store-description.md` without its generated comment to the resource page
+  (`PATCH /api/v1/pages/edit/<project>`, permission `edit_page`). The page therefore
+  follows the tagged commit's README, on every tier that publishes to Hangar. The Gradle
+  plugin only logs a rejected edit, so the task then reads the page back from the public
+  `GET /api/v1/pages/main/<project>` endpoint and fails unless it matches exactly; the
+  project has to be publicly visible for that read to succeed. Do not edit the page on
+  Hangar by hand: the next release overwrites it.

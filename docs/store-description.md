@@ -1,6 +1,6 @@
 <!-- Generated from README.md by scripts/store-description.py. Do not edit.
-     Paste everything below this comment into the Modrinth description editor
-     and the Hangar resource page. -->
+     Paste everything below this comment into the Modrinth description editor.
+     The release workflow syncs it to the Hangar resource page. -->
 
 Part of the [Ninja6-MC](https://github.com/Ninja6-MC) plugin suite.
 
