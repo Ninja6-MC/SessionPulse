@@ -6,9 +6,11 @@
 # Usage: scripts/dev-server.sh [paper|folia|spigot] [mc-version] [--op <name>] [--fresh]
 #
 # Both positional arguments are optional and the platform defaults to paper. A first
-# argument that starts with a digit is read as the version, so the old one-argument form
-# `scripts/dev-server.sh 1.21.11` still boots Paper. The smoke matrix is CI's job, not
-# this script's; scripts/dev-server.ps1 is the same thing for Windows PowerShell.
+# positional that starts with a digit is read as the version, so the old one-argument form
+# `scripts/dev-server.sh 1.21.11` still boots Paper. Flags may come before, between or
+# after the positionals, matching what PowerShell's binder accepts, and `-h`/`--help`
+# prints the usage line. The smoke matrix is CI's job, not this script's;
+# scripts/dev-server.ps1 is the same thing for Windows PowerShell.
 #
 # run/ persists across platform and version switches, and that is what makes difficulty
 # awkward: `difficulty=peaceful` is forced into run/server.properties on every boot, but a
@@ -39,15 +41,60 @@ set -euo pipefail
 
 USAGE="usage: scripts/dev-server.sh [paper|folia|spigot] [mc-version] [--op <name>] [--fresh]"
 
-PLATFORM="paper"
 OP_NAME=""
 FRESH=0
+POSITIONAL=()
 
-# The `--*` half of the test matters as much as the digit half: without it a leading
-# `--fresh` is read as the platform and dies as an unknown platform two lines down.
-if [[ $# -gt 0 && ! "$1" =~ ^[0-9] && "$1" != --* ]]; then
-    PLATFORM="$1"
-    shift
+# One pass: flags are recognised wherever they appear and everything else is set aside as
+# a positional, so `--fresh paper` and `paper --fresh` both work. PowerShell's binder
+# already accepts either order, and this is what makes the two scripts agree.
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h | --help)
+            echo "$USAGE"
+            exit 0
+            ;;
+        --op)
+            # A second --op is an error rather than a silent last-one-wins; the PowerShell
+            # binder rejects a repeated -Op for us.
+            if [[ -n "$OP_NAME" ]]; then
+                echo "error: --op given more than once" >&2
+                exit 2
+            fi
+            OP_NAME="${2:-}"
+            if [[ ! "$OP_NAME" =~ ^[A-Za-z0-9_]{1,16}$ ]]; then
+                echo "error: --op needs a Minecraft name matching" \
+                    "[A-Za-z0-9_]{1,16}, not '$OP_NAME'" >&2
+                exit 2
+            fi
+            shift 2
+            ;;
+        --fresh)
+            if [[ "$FRESH" == 1 ]]; then
+                echo "error: --fresh given more than once" >&2
+                exit 2
+            fi
+            FRESH=1
+            shift
+            ;;
+        -*)
+            echo "error: unknown argument '$1'" >&2
+            echo "$USAGE" >&2
+            exit 2
+            ;;
+        *)
+            POSITIONAL+=("$1")
+            shift
+            ;;
+    esac
+done
+
+# A leading digit is the version, so the old `dev-server.sh 1.21.11` form still boots Paper.
+PLATFORM="paper"
+MC_VERSION="1.20.4"
+if [[ ${#POSITIONAL[@]} -gt 0 && ! "${POSITIONAL[0]}" =~ ^[0-9] ]]; then
+    PLATFORM="${POSITIONAL[0]}"
+    POSITIONAL=("${POSITIONAL[@]:1}")
 fi
 case "$PLATFORM" in
     paper | folia | spigot) ;;
@@ -57,36 +104,22 @@ case "$PLATFORM" in
         ;;
 esac
 
-# Same guard on the version, or `dev-server.sh paper --fresh` downloads paper---fresh.jar.
-# The shift is what stops the flag loop below from re-reading a consumed positional.
-MC_VERSION="1.20.4"
-if [[ $# -gt 0 && "$1" != --* ]]; then
-    MC_VERSION="$1"
-    shift
+if [[ ${#POSITIONAL[@]} -gt 0 ]]; then
+    # Rejected the way an empty platform is: an empty version would otherwise be sent
+    # to the fill API as a version and fail there, much further from the cause.
+    if [[ -z "${POSITIONAL[0]}" ]]; then
+        echo "error: mc-version must not be empty" >&2
+        exit 2
+    fi
+    MC_VERSION="${POSITIONAL[0]}"
+    POSITIONAL=("${POSITIONAL[@]:1}")
 fi
 
-# Flags in any order, after the positionals that have now all been consumed.
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --op)
-            OP_NAME="${2:-}"
-            if [[ ! "$OP_NAME" =~ ^[A-Za-z0-9_]{1,16}$ ]]; then
-                echo "error: --op needs a Minecraft name matching [A-Za-z0-9_]{1,16}, not '$OP_NAME'" >&2
-                exit 2
-            fi
-            shift 2
-            ;;
-        --fresh)
-            FRESH=1
-            shift
-            ;;
-        *)
-            echo "error: unknown argument '$1'" >&2
-            echo "$USAGE" >&2
-            exit 2
-            ;;
-    esac
-done
+if [[ ${#POSITIONAL[@]} -gt 0 ]]; then
+    echo "error: unexpected argument '${POSITIONAL[0]}'" >&2
+    echo "$USAGE" >&2
+    exit 2
+fi
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUNDIR="$REPO_ROOT/run"
@@ -181,18 +214,29 @@ fi
 # Server configuration
 # ---------------------------------------------------------------------------
 if [[ "$FRESH" == 1 ]]; then
-    # world, world_nether and world_the_end on all three platforms. A non-default
-    # `level-name` is not covered by the glob and has to be deleted by hand; handling it
-    # would mean parsing the very file this script is about to rewrite. The quoting is
-    # load-bearing, and $RUNDIR cannot be empty here: `set -u` is on and it is assigned
-    # unconditionally above.
-    echo "==> Removing generated worlds"
-    for WORLD in "$RUNDIR"/world*; do
-        if [[ -e "$WORLD" ]]; then
-            echo "    $(basename "$WORLD")"
+    # world, world_nether and world_the_end on all three platforms. Directories only, so a
+    # `world.zip` backup sitting in run/ is left alone; dev-server.ps1 restricts itself the
+    # same way. A non-default `level-name` is not covered by the glob and has to be deleted
+    # by hand; handling it would mean parsing the very file this script is about to
+    # rewrite. The quoting is load-bearing, and $RUNDIR cannot be empty here: `set -u` is
+    # on and it is assigned unconditionally above.
+    WORLDS=()
+    for CANDIDATE in "$RUNDIR"/world*; do
+        if [[ -d "$CANDIDATE" ]]; then
+            WORLDS+=("$CANDIDATE")
         fi
     done
-    rm -rf "$RUNDIR"/world*
+    if [[ ${#WORLDS[@]} -gt 0 ]]; then
+        # Matched first, then deleted: deleting inside the glob loop would be fine here,
+        # but this is the order dev-server.ps1 has to use and the two read the same.
+        echo "==> Removing generated worlds"
+        for WORLD in "${WORLDS[@]}"; do
+            echo "    $(basename "$WORLD")"
+            rm -rf "$WORLD"
+        done
+    else
+        echo "==> No generated worlds to remove"
+    fi
 fi
 
 echo "eula=true" > "$RUNDIR/eula.txt"
@@ -249,8 +293,8 @@ if [[ -n "$OP_NAME" ]]; then
     B6="$(printf '%02x' "$(( 0x${HEX:12:2} & 0x0f | 0x30 ))")"
     B8="$(printf '%02x' "$(( 0x${HEX:16:2} & 0x3f | 0x80 ))")"
     OP_UUID="${HEX:0:8}-${HEX:8:4}-${B6}${HEX:14:2}-${B8}${HEX:18:2}-${HEX:20:12}"
-    # Overwritten every run, so any other operator in the file is dropped, and a server
-    # still running against run/ rewrites ops.json at shutdown over the top of this.
+    # Overwritten every run, so any other operator in the file is dropped. The banner below
+    # carries the warning about a server that is still running rewriting this at shutdown.
     # bypassesPlayerLimit is false to mirror exactly what the server itself writes.
     cat > "$RUNDIR/ops.json" <<OPS
 [
@@ -288,6 +332,8 @@ echo "    already exists keeps its own difficulty in level.dat and ignores the p
 echo "    --fresh deletes run/world* so the next world honours it."
 if [[ -n "$OP_NAME" ]]; then
     echo "    $OP_NAME is op (level 4) via run/ops.json, so /difficulty peaceful works in game."
+    echo "    A server already running against run/ rewrites ops.json at its own shutdown,"
+    echo "    which puts the old file back; stop that one first if the op does not stick."
 fi
 cat <<'BANNER'
 

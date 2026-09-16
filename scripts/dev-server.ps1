@@ -48,9 +48,24 @@
 param(
     [ValidateSet('paper', 'folia', 'spigot')]
     [string]$Platform = 'paper',
+    # Rejected here rather than at the fill API, which is where an empty version would
+    # otherwise surface, a long way from the cause. dev-server.sh rejects one the same way.
+    [ValidateNotNullOrEmpty()]
     [string]$Version = '1.20.4',
-    # Mirrors the [A-Za-z0-9_]{1,16} name check dev-server.sh does on --op.
-    [ValidatePattern('^[A-Za-z0-9_]{1,16}$')]
+    # Mirrors the [A-Za-z0-9_]{1,16} name check dev-server.sh does on --op, down to the
+    # wording of the message. 5.1's ValidatePattern has no ErrorMessage property - that
+    # arrived in PowerShell 6 - and a ValidateScript that merely returns $false prints its
+    # own source, so the message is thrown. A repeated -Op never reaches this: the binder
+    # refuses a named parameter given twice. `-?` prints the comment-based help above,
+    # which is this script's equivalent of the shell's --help.
+    [ValidateScript({
+        if ($_ -match '^[A-Za-z0-9_]{1,16}$') {
+            $true
+        }
+        else {
+            throw "error: -Op needs a Minecraft name matching [A-Za-z0-9_]{1,16}, not '$_'"
+        }
+    })]
     [string]$Op,
     [switch]$Fresh
 )
@@ -157,15 +172,26 @@ else {
 # Server configuration
 # ---------------------------------------------------------------------------
 if ($Fresh) {
-    # world, world_nether and world_the_end on all three platforms. A non-default
-    # level-name is not covered by the wildcard and has to be deleted by hand; handling it
-    # would mean parsing the very file this script is about to rewrite.
-    Write-Host '==> Removing generated worlds'
-    Get-ChildItem -Path $RunDir -Filter 'world*' -Directory -ErrorAction SilentlyContinue |
-        ForEach-Object {
-            Write-Host "    $($_.Name)"
-            Remove-Item -Recurse -Force $_.FullName
+    # world, world_nether and world_the_end on all three platforms. Directories only, so a
+    # world.zip backup sitting in run\ is left alone; dev-server.sh restricts itself the
+    # same way. A non-default level-name is not covered by the wildcard and has to be
+    # deleted by hand; handling it would mean parsing the very file this script is about to
+    # rewrite.
+    #
+    # @() materialises the whole listing before anything is deleted. Deleting inside the
+    # pipeline mutates the directory Get-ChildItem is still enumerating, and a later entry
+    # such as world_the_end can be skipped and survive the wipe.
+    $Worlds = @(Get-ChildItem -Path $RunDir -Filter 'world*' -Directory -ErrorAction SilentlyContinue)
+    if ($Worlds.Count -gt 0) {
+        Write-Host '==> Removing generated worlds'
+        foreach ($World in $Worlds) {
+            Write-Host "    $($World.Name)"
+            Remove-Item -Recurse -Force $World.FullName
         }
+    }
+    else {
+        Write-Host '==> No generated worlds to remove'
+    }
 }
 
 # ASCII without a BOM: the server reads these as Java properties, and 5.1's UTF8 encoding
@@ -231,8 +257,8 @@ if (-not [string]::IsNullOrEmpty($Op)) {
     $Bytes[8] = [byte](($Bytes[8] -band 0x3f) -bor 0x80)
     $Hex = -join ($Bytes | ForEach-Object { $_.ToString('x2') })
     $OpUuid = $Hex -replace '^(.{8})(.{4})(.{4})(.{4})(.{12})$', '$1-$2-$3-$4-$5'
-    # Overwritten every run, so any other operator in the file is dropped, and a server
-    # still running against run\ rewrites ops.json at shutdown over the top of this.
+    # Overwritten every run, so any other operator in the file is dropped. The banner below
+    # carries the warning about a server that is still running rewriting this at shutdown.
     # bypassesPlayerLimit is false to mirror exactly what the server itself writes.
     $OpsText = @"
 [
@@ -259,6 +285,8 @@ Write-Host '    already exists keeps its own difficulty in level.dat and ignores
 Write-Host '    -Fresh deletes run\world* so the next world honours it.'
 if (-not [string]::IsNullOrEmpty($Op)) {
     Write-Host "    $Op is op (level 4) via run\ops.json, so /difficulty peaceful works in game."
+    Write-Host '    A server already running against run\ rewrites ops.json at its own shutdown,'
+    Write-Host '    which puts the old file back; stop that one first if the op does not stick.'
 }
 Write-Host ''
 
