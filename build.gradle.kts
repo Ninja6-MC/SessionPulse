@@ -5,6 +5,11 @@
 // reference: util". A script-compilation failure fails every job in the workflow, not
 // just the one that would have run the check, so this import is load-bearing.
 import java.util.zip.ZipFile
+import io.papermc.hangarpublishplugin.PageSyncTask
+import java.net.URI
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
 
 plugins {
     `java-library`
@@ -12,8 +17,9 @@ plugins {
     // Hangar has no publish API that a generic action can drive, so publication goes
     // through PaperMC's own Gradle plugin; Modrinth is published from the workflow. The
     // same plugin and version as SpiralGenesis. Applying it registers
-    // publishPluginPublicationToHangar and nothing else: no task of an ordinary build or
-    // test depends on it, and the API token is read lazily, only when that task runs.
+    // publishPluginPublicationToHangar and the resource page sync tasks below: no task of
+    // an ordinary build or test depends on them, and the API token is read lazily, only when
+    // one of them runs.
     id("io.papermc.hangar-publish-plugin") version "0.1.4"
 }
 
@@ -175,6 +181,48 @@ hangarPublish {
                 )
             }
         }
+
+        // The Hangar resource page, synced by syncPluginPublicationMainResourcePagePageToHangar
+        // (PATCH pages/edit/<id>, which needs the edit_page permission on the API key). The
+        // text is docs/store-description.md without its generated comment and the blank
+        // lines around it: exactly what was pasted by hand, and what Hangar stores and
+        // returns byte for byte. Read only when the sync task runs.
+        pages {
+            resourcePage(
+                providers.fileContents(layout.projectDirectory.file("docs/store-description.md")).asText
+                    .map { text ->
+                        check(text.startsWith("<!--") && "-->" in text) {
+                            "docs/store-description.md must start with its generated comment; " +
+                                "run python scripts/store-description.py"
+                        }
+                        text.substringAfter("-->").trim()
+                    }
+            )
+        }
+    }
+}
+
+// The page sync cannot fail on its own: hangar-publish-plugin 0.1.4 logs a rejected edit
+// (a 403 for a key without edit_page, a 404 for a wrong slug) and lets the task succeed.
+// So the task reads the page back from the public endpoint and fails unless Hangar now
+// holds exactly the content it sent. A rejected edit of an already identical page still
+// passes here; its "Error using endpoint" line in the log is the only sign of it.
+tasks.withType<PageSyncTask>().configureEach {
+    doLast {
+        val expected = page.get().content.get()
+        val url = apiEndpoint.get() + "pages/main/" + id.get()
+        val response = HttpClient.newHttpClient().send(
+            HttpRequest.newBuilder(URI.create(url)).GET().build(),
+            HttpResponse.BodyHandlers.ofString(Charsets.UTF_8)
+        )
+        if (response.statusCode() != 200 || response.body() != expected) {
+            throw GradleException(
+                "Hangar resource page for '${id.get()}' does not match docs/store-description.md " +
+                    "after the sync (GET $url returned ${response.statusCode()}). Check the log " +
+                    "above for the rejected edit; the API key needs the edit_page permission."
+            )
+        }
+        logger.lifecycle("Hangar resource page for '${id.get()}' matches docs/store-description.md.")
     }
 }
 

@@ -388,6 +388,14 @@ jobs:
       # HANGAR_API_TOKEN is in this step's env only; the Gradle plugin reads it from there.
       # The publish task depends on shadowJar and is passed the same -PpluginVersion, so it
       # reuses the jar built and checksummed above rather than producing a different one.
+      #
+      # The resource page is synced from docs/store-description.md in this same step, so the
+      # token reaches no other step, and only after the version upload succeeded: a failed
+      # upload exits before the sync. A failed sync fails the step and the job, because a
+      # stale store page is a release defect, but the version stays published and the notice
+      # written before the sync says so. After a failed sync, run the sync task by hand
+      # (RELEASE_PROCESS.md) rather than re-running the job, whose upload would be rejected
+      # as a duplicate before the sync is reached.
       - name: Publish to Hangar
         if: >-
           !cancelled()
@@ -399,9 +407,16 @@ jobs:
           VERSION: ${{ steps.vars.outputs.version }}
           HANGAR_CHANNEL: ${{ steps.vars.outputs.hangarChannel }}
           HANGAR_PROJECT: ${{ vars.HANGAR_PROJECT || 'SessionPulse' }}
-        run: >
-          ./gradlew publishPluginPublicationToHangar
-          -PpluginVersion="$VERSION"
-          -PhangarChannel="$HANGAR_CHANNEL"
-          -PhangarProject="$HANGAR_PROJECT"
-          --no-daemon
+        run: |
+          ./gradlew publishPluginPublicationToHangar \
+            -PpluginVersion="$VERSION" \
+            -PhangarChannel="$HANGAR_CHANNEL" \
+            -PhangarProject="$HANGAR_PROJECT" \
+            --no-daemon
+          echo "::notice title=Hangar::$VERSION is published to the Hangar $HANGAR_CHANNEL channel."
+          if ! ./gradlew syncPluginPublicationMainResourcePagePageToHangar \
+            -PhangarProject="$HANGAR_PROJECT" \
+            --no-daemon; then
+            echo "::error title=Hangar page sync::$VERSION is published, but the resource page was not synced."
+            exit 1
+          fi
