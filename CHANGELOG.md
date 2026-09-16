@@ -137,9 +137,9 @@ adheres to [Semantic Versioning](https://semver.org/).
   It refuses a malformed tag or one not on `main`, runs the tests, builds
   `SessionPulse-<version>.jar` with a `.sha256` beside it, and publishes a GitHub release
   whose notes come from this file and say the plugin requires Java 21. A stable tag needs
-  its own section here; a pre-release falls back to `[Unreleased]`. Modrinth (alpha, beta
-  and release) and Hangar (beta and release) are published when their tokens are
-  configured, and skipped otherwise.
+  its own section here; a pre-release takes its own section, then its base version's,
+  then `[Unreleased]`. Modrinth (alpha, beta and release) and Hangar (beta and release)
+  are published when their tokens are configured, and skipped otherwise.
 - The Hangar publishing plugin, driven entirely by properties and `HANGAR_API_TOKEN`, so
   nothing about it runs during a build.
 - `META-INF/LICENSE` and `META-INF/THIRD_PARTY_NOTICES.md` in the plugin jar, carrying
@@ -163,3 +163,14 @@ adheres to [Semantic Versioning](https://semver.org/).
   downloads instead of a build from source only.
 - The `RELEASE_PROCESS.md` tag example is now `v0.1.0-alpha.1`.
 - The brand assets notes moved from the README to `docs/assets/README.md`.
+- The Admin Guide installs from the jar published on GitHub Releases, with the
+  `.sha256` check, and keeps building from source as the fallback.
+
+### Fixed
+- `scripts/store-description.py` recognises `~~~` fences as well as backtick fences,
+  through one fence test shared by every transform and check, and a fence closes only
+  on the same character at least as long as its opener. A `#` line inside a `~~~` fence
+  now fails the check instead of passing as a heading, and an unclosed fence fails the
+  run instead of hiding the rest of the file from the checks.
+- `scripts/store-description.py` no longer rewrites markdown links and images inside
+  fenced blocks, and no longer reports them as relative links.
