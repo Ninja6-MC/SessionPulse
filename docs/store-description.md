@@ -1,25 +1,8 @@
-# SessionPulse
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/icon-transparent-dark.svg">
-    <img src="docs/assets/icon-transparent-light.svg" width="160" height="160" alt="">
-  </picture>
-</p>
-
-<p align="center">
-  <b>Gentle session health reminders, playtime tracking, and optional session limits for PaperMC, Spigot &amp; Folia.</b>
-</p>
-
-<p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="License: GPL v3" /></a>
-</p>
+<!-- Generated from README.md by scripts/store-description.py. Do not edit.
+     Paste everything below this comment into the Modrinth description editor
+     and the Hangar resource page. -->
 
 Part of the [Ninja6-MC](https://github.com/Ninja6-MC) plugin suite.
-
-**[Download](https://github.com/Ninja6-MC/SessionPulse/releases)** ·
-[Modrinth](https://modrinth.com/plugin/sessionpulse) ·
-[Hangar](https://hangar.papermc.io/Ninja6-MC/SessionPulse)
 
 ---
 
@@ -38,21 +21,21 @@ versions and to Hangar's Beta channel.
 ## What it does
 
 SessionPulse watches how long each player has been online and sends configurable,
-non-intrusive health reminders — hydration, posture, eye breaks — at milestones
+non-intrusive health reminders - hydration, posture, eye breaks - at milestones
 you define. It never kicks anyone by default; enforcement is an optional layer for
 servers that want structured rest breaks (families, schools, wellness communities).
 
 ### Features
 
-- **Configurable milestones** — any number of one-time alerts keyed by minutes played.
-- **Recurring overtime** — optional repeating reminders after a threshold (marathon safety net).
-- **Optional enforcement** — graceful disconnect + rejoin cooldown, disabled by default.
-- **No reset by rejoining** — playtime accumulates across sessions and resets only after
+- **Configurable milestones** - any number of one-time alerts keyed by minutes played.
+- **Recurring overtime** - optional repeating reminders after a threshold (marathon safety net).
+- **Optional enforcement** - graceful disconnect + rejoin cooldown, disabled by default.
+- **No reset by rejoining** - playtime accumulates across sessions and resets only after
   a configurable time offline.
-- **AFK-aware** — pauses the session clock when idle (EssentialsX hook or built-in detection).
-- **Multi-platform** — Paper, Spigot and Folia, via FoliaLib + Adventure.
-- **Rich formatting** — MiniMessage on all platforms, action bar, sound, optional title.
-- **Folia-ready** — region-safe schedulers throughout.
+- **AFK-aware** - pauses the session clock when idle (EssentialsX hook or built-in detection).
+- **Multi-platform** - Paper, Spigot and Folia, via FoliaLib + Adventure.
+- **Rich formatting** - MiniMessage on all platforms, action bar, sound, optional title.
+- **Folia-ready** - region-safe schedulers throughout.
 
 ---
 
@@ -75,7 +58,7 @@ servers that want structured rest breaks (families, schools, wellness communitie
    and from the first beta to Hangar.
 2. Drop it into your server's `plugins/` directory and start the server.
 3. `plugins/SessionPulse/config.yml` is generated on that first start, with every setting
-   at its default — enforcement off, two health milestones, overtime off.
+   at its default - enforcement off, two health milestones, overtime off.
 4. Edit it and run `/spulse reload`; nothing in it needs a restart.
 
 To build from source instead:
@@ -114,11 +97,11 @@ The command is `/spulse`, with the alias `/sessionpulse`.
 
 ## Documentation
 
-- [Configuration Reference](docs/CONFIG.md) — every key in `config.yml`, its range and
+- [Configuration Reference](https://github.com/Ninja6-MC/SessionPulse/blob/main/docs/CONFIG.md) - every key in `config.yml`, its range and
   default, and what happens to a value that cannot be used.
-- [Admin Guide](docs/ADMIN_GUIDE.md) — commands, permissions, the counted window, AFK
+- [Admin Guide](https://github.com/Ninja6-MC/SessionPulse/blob/main/docs/ADMIN_GUIDE.md) - commands, permissions, the counted window, AFK
   detection, enabling enforcement safely, stored data and troubleshooting.
-- [Changelog](CHANGELOG.md) — what changed in each version.
+- [Changelog](https://github.com/Ninja6-MC/SessionPulse/blob/main/CHANGELOG.md) - what changed in each version.
 
 ---
 
@@ -136,14 +119,4 @@ The command is `/spulse`, with the alias `/sessionpulse`.
 
 ## License
 
-[GNU General Public License v3.0](LICENSE).
-
----
-
-<p align="center">
-  <a href="https://github.com/Ninja6-MC"><img src="assets/ninja6-primary-256.png" width="48" height="48" alt=""></a>
-</p>
-
-<p align="center">
-  <sub>A <a href="https://github.com/Ninja6-MC">Ninja6</a> project.</sub>
-</p>
+[GNU General Public License v3.0](https://github.com/Ninja6-MC/SessionPulse/blob/main/LICENSE).

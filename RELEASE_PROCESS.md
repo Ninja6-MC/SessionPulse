@@ -15,6 +15,11 @@ Every release follows `MAJOR.MINOR.PATCH[-PRERELEASE]`:
   * `v1.0.0-beta.1` (Public feature-complete testing builds)
   * `v1.0.0-rc.1` (Release candidate)
 
+**Before 1.0.0, every release is a pre-release.** Alphas are for internal testing and
+betas for public testing; `1.0.0` is the first stable release. Do not push an unsuffixed
+tag below `v1.0.0`: `release.yml` publishes every unsuffixed tag as a stable release, as
+*Latest* on GitHub and on the *release* channel of Modrinth and Hangar.
+
 ---
 
 ## 2. Release Tiers & Distribution Channels
@@ -81,17 +86,23 @@ Notes on the table:
    ./gradlew test
    ```
 3. Update `CHANGELOG.md`. A stable release needs a `## [X.Y.Z]` section, merged to `main`
-   before tagging. A pre-release may ship from `## [Unreleased]`. Date the `## [X.Y.Z]`
-   heading in that same pull request; the extractor matches the heading with or without
-   a date, so an undated one still releases.
+   before tagging. Date the `## [X.Y.Z]` heading in that same pull request; the extractor
+   matches the heading with or without a date, so an undated one still releases.
+
+   Pre-releases take their notes from the base version's section once it exists. For a
+   `vX.Y.Z-*` tag the extractor tries `## [X.Y.Z-pre.N]`, then `## [X.Y.Z]`, then
+   `## [Unreleased]`, so a `## [X.Y.Z]` section takes precedence over `## [Unreleased]`
+   for every pre-release of that version. Changes aimed at that version go under
+   `## [X.Y.Z]`; `## [Unreleased]` is used only when no section for the base version
+   exists. Below 1.0.0 the section stays undated, because no stable tag is cut for it.
 
 ### Step 2: Cut the Tag
 
 Tag the release on `main`:
 
 ```bash
-git tag -a v0.1.0 -m "v0.1.0"
-git push origin v0.1.0
+git tag -a v0.1.0-alpha.1 -m "v0.1.0-alpha.1"
+git push origin v0.1.0-alpha.1
 ```
 
 Push release tags one at a time, by name. GitHub fires no tag push events at all when more
@@ -188,3 +199,20 @@ If a re-run is not possible, publish the failed registry by hand:
 The Minecraft versions declared to both registries are one explicit list, kept in
 `build.gradle.kts` (`releaseGameVersions`) and in `release.yml` (`game-versions`): 1.20.4
 to 1.20.6 and 1.21 to 1.21.11. Edit both together.
+
+### Store Descriptions
+
+The project descriptions on Modrinth and Hangar are not written by the release workflow.
+Both are generated from `README.md` into `docs/store-description.md` by
+`scripts/store-description.py`, and CI fails when the committed file is out of date with
+the README or breaks the store content checks. Edit the README, run
+`python scripts/store-description.py`, and commit both files together.
+
+* **Modrinth** is a manual paste. `mc-publish` uploads versions and their changelogs and
+  has no description input. Copy everything below the generated comment at the top of
+  `docs/store-description.md` into the project's description editor on Modrinth.
+  Editing a description does **not** re-enter the review queue: if the project was
+  rejected, fix the description and then use *Resubmit for review*, or it stays rejected.
+* **Hangar** is currently also pasted by hand, the same text into the resource page.
+  Syncing it from the release workflow is tracked in
+  [#67](https://github.com/Ninja6-MC/SessionPulse/issues/67).
