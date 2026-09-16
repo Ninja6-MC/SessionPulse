@@ -69,7 +69,7 @@ import java.util.function.Supplier;
  *
  * <p>That version gap is why no delivery here passes a {@code Sound.Emitter}. The platform's
  * {@code CraftBukkitFacet$EntitySound} and {@code $EntitySound_1_19_3}, the only facets that
- * can carry one, are skipped on 26.x; the emitter-less {@code SoundWithCategory} facet is the
+ * can carry one, are skipped on 26.x; the emitter-less {@code BukkitFacet$SoundWithCategory} is the
  * one that applies everywhere, and it plays at the audience's own position. An emitter-taking
  * call would match no facet on 26.x and be dropped without a word.
  */
