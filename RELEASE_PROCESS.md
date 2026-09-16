@@ -81,9 +81,9 @@ Notes on the table:
    ./gradlew test
    ```
 3. Update `CHANGELOG.md`. A stable release needs a `## [X.Y.Z]` section, merged to `main`
-   before tagging. A pre-release may ship from `## [Unreleased]`. The `## [X.Y.Z]`
-   heading is left undated until the release is cut, and is dated in the pre-tag pull
-   request that merges it to `main`.
+   before tagging. A pre-release may ship from `## [Unreleased]`. Date the `## [X.Y.Z]`
+   heading in that same pull request; the extractor matches the heading with or without
+   a date, so an undated one still releases.
 
 ### Step 2: Cut the Tag
 

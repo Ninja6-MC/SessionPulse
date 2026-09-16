@@ -297,7 +297,7 @@ a colour or a click event into your message.
 | `<minutes>` | Counted whole minutes, truncated. |
 | `<cooldown>` | Minutes before the player may rejoin, rounded up. |
 | `<rank>` | Position in `/spulse top`. Command replies only. |
-| `<lifetime>` | Lifetime playtime. Command replies only. |
+| `<lifetime>` | Lifetime hours to one decimal place, truncated. Command replies only. |
 
 Which message gets which:
 

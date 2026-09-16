@@ -230,7 +230,7 @@ disconnected with `enforcement.kick-message`, and refused at pre-login until
 `enforcement.cooldown-minutes` have passed. The refusal screen shows the time remaining.
 
 The order of operations when it fires: the exemption is checked, the configuration is
-re-checked, the live session is closed out, the cooldown is written, the counted window
+re-checked, the session is confirmed to still be the live one, the cooldown is written, the counted window
 is reset and checkpointed, everything is flushed to disk, and only then is the player
 disconnected. That is why a restart or a crash does not clear a cooldown.
 
@@ -260,7 +260,8 @@ playtime is kept.
 - If another plugin cancels the disconnect, the player stays online. The cooldown has
   already been written by then.
 - If the player disconnects on their own in the moment before the disconnect task runs,
-  the kick simply does not happen; the cooldown still stands.
+  nothing happens at all: no kick, and no cooldown is written. Their next connection is
+  judged afresh on its first tick.
 - `enforcement.cooldown-minutes` applies to the next disconnect only. Changing it does
   not shorten a cooldown already running.
 
@@ -322,7 +323,7 @@ is forced to disk before it replaces the file.
 Keys the plugin does not recognise are preserved rather than dropped.
 
 A `data.yml` that cannot be parsed, is blank, or has the wrong shape is **copied aside**
-rather than overwritten — to `data.yml.unreadable`, or `data.yml.unreadable-2` and so on
+rather than overwritten — to `data.yml.unreadable`, or `data.yml.unreadable-1` and so on
 if that name is taken — and the plugin starts from an empty set. A misshapen file is then
 repaired in place so the next start finds a clean one. If the copy aside itself fails,
 the plugin refuses to write at all rather than destroy the file; that is logged.
