@@ -72,6 +72,13 @@ REFERENCE_ANYWHERE = re.compile(r"^\s*\[[^\]]+\]:[ \t]*<?([^\s>]+)")
 IMAGE_EXTENSION = re.compile(r"\.(png|jpe?g|gif|svg|webp)([?#]|$)", re.IGNORECASE)
 
 
+# A fence delimiter: three or more backticks or three or more tildes. CommonMark closes a
+# fence only with the same character, at least as long as the opener and followed by
+# nothing but whitespace, and a backtick opener cannot carry a backtick in its info string.
+# Leading whitespace is accepted at any depth so that a fence inside a list item counts.
+FENCE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
+
+
 class ReadmeError(ValueError):
     """The README cannot be transformed at all, as opposed to producing a bad result.
 
@@ -98,6 +105,66 @@ ASCII_FOLD = [
     (chr(0x274c), "No"),  # cross mark
     (chr(0x2b07), ""),  # down arrow, download link
 ]
+
+
+def fence_map(lines, source="the generated description"):
+    """Pair each line with whether it belongs to a fenced block, delimiters included.
+
+    The ONLY fence test in this file. Every transform and check that must leave code alone
+    asks this, so a fence style one of them recognises cannot be prose to another. A
+    `~~~` fence once passed a `## key: value` comment as a heading, because only the
+    backtick form was known.
+
+    An unclosed fence fails rather than running to the end of the file: everything after
+    it would silently stop being checked.
+    """
+    out = []
+    opener = None
+    opened = None
+    for number, line in enumerate(lines, 1):
+        match = FENCE.match(line)
+        if opener is None:
+            if match and not (match.group(1)[0] == "`" and "`" in match.group(2)):
+                opener = match.group(1)
+                opened = number
+                out.append((line, True))
+            else:
+                out.append((line, False))
+            continue
+        if (
+            match
+            and match.group(1)[0] == opener[0]
+            and len(match.group(1)) >= len(opener)
+            and match.group(2).strip() == ""
+        ):
+            opener = None
+        out.append((line, True))
+    if opener is not None:
+        raise ReadmeError(
+            "%s line %d opens a code fence (%s) that is never closed." % (source, opened, opener)
+        )
+    return out
+
+
+def map_prose(text, transform):
+    """Apply transform to each run of consecutive lines outside fenced blocks.
+
+    Runs rather than single lines, so a pattern that spans a line break inside a paragraph
+    still matches as it did before fences were skipped.
+    """
+    out = []
+    run = []
+    for line, fenced in fence_map(text.split("\n")):
+        if fenced:
+            if run:
+                out.append(transform("\n".join(run)))
+                run = []
+            out.append(line)
+        else:
+            run.append(line)
+    if run:
+        out.append(transform("\n".join(run)))
+    return "\n".join(out)
 
 
 def strip_title(lines):
@@ -188,12 +255,7 @@ def strip_store_links(lines):
 def fold_ascii(lines):
     """Fold typographic characters to ASCII, outside fenced blocks."""
     out = []
-    fenced = False
-    for line in lines:
-        if line.lstrip().startswith("```"):
-            fenced = not fenced
-            out.append(line)
-            continue
+    for line, fenced in fence_map(lines):
         if not fenced:
             for bad, good in ASCII_FOLD:
                 line = line.replace(bad, good)
@@ -223,10 +285,8 @@ def check_no_stray_hashes(lines):
     config block got SpiralGenesis rejected on 2026-09-05.
     """
     problems = []
-    fenced = False
-    for number, line in enumerate(lines, 1):
-        if line.lstrip().startswith("```"):
-            fenced = not fenced
+    for number, (line, fenced) in enumerate(fence_map(lines), 1):
+        if fenced and FENCE.match(line):
             continue
         if not line.lstrip().startswith("#"):
             continue
@@ -238,8 +298,11 @@ def check_no_stray_hashes(lines):
 
 
 def check_no_relative_links(text):
+    """Fenced blocks are skipped, matching absolutise_links, which leaves them alone."""
     problems = []
-    for number, line in enumerate(text.split("\n"), 1):
+    for number, (line, fenced) in enumerate(fence_map(text.split("\n")), 1):
+        if fenced:
+            continue
         for match in re.finditer(r"\]\(([^)]+)\)", line):
             target = match.group(1)
             if not ABSOLUTE.match(target):
@@ -255,11 +318,7 @@ def check_no_relative_reference_definitions(text):
     code, not a definition.
     """
     problems = []
-    fenced = False
-    for number, line in enumerate(text.split("\n"), 1):
-        if line.lstrip().startswith("```"):
-            fenced = not fenced
-            continue
+    for number, (line, fenced) in enumerate(fence_map(text.split("\n")), 1):
         if fenced:
             continue
         match = REFERENCE_ANYWHERE.match(line)
@@ -282,11 +341,7 @@ def check_no_relative_html_refs(text):
     as covered in review.
     """
     problems = []
-    fenced = False
-    for number, line in enumerate(text.split("\n"), 1):
-        if line.lstrip().startswith("```"):
-            fenced = not fenced
-            continue
+    for number, (line, fenced) in enumerate(fence_map(text.split("\n")), 1):
         if fenced:
             continue
         for attribute, double, single, bare in ATTRIBUTE.findall(line):
@@ -317,11 +372,7 @@ def check_body_is_intact(text):
 
 def check_ascii(text):
     problems = []
-    fenced = False
-    for number, line in enumerate(text.split("\n"), 1):
-        if line.lstrip().startswith("```"):
-            fenced = not fenced
-            continue
+    for number, (line, fenced) in enumerate(fence_map(text.split("\n")), 1):
         if fenced:
             continue
         for character in line:
@@ -336,7 +387,8 @@ def absolutise_image_targets(text):
 
     Runs before absolutise_links, which would otherwise rewrite them through BLOB and
     produce an image tag pointing at an HTML page. The README carries no markdown images
-    today; this exists so that adding one does not quietly break the store page.
+    today; this exists so that adding one does not quietly break the store page. Fenced
+    blocks are left alone: there the target is example code, not a link.
     """
 
     def replace(match):
@@ -345,13 +397,14 @@ def absolutise_image_targets(text):
             return match.group(0)
         return "!" + match.group(1) + "(" + RAW + target + ")"
 
-    return re.sub(r"!(\[[^\]]*\])\(([^)]+)\)", replace, text)
+    return map_prose(text, lambda prose: re.sub(r"!(\[[^\]]*\])\(([^)]+)\)", replace, prose))
 
 
 def absolutise_links(text):
     """Point relative markdown links at github.com.
 
-    On a store page a relative target resolves against the project URL and 404s.
+    On a store page a relative target resolves against the project URL and 404s. Fenced
+    blocks are left alone, as in absolutise_image_targets.
     """
 
     def replace(match):
@@ -360,7 +413,7 @@ def absolutise_links(text):
             return match.group(0)
         return "](" + BLOB + target + ")"
 
-    return re.sub(r"\]\(([^)]+)\)", replace, text)
+    return map_prose(text, lambda prose: re.sub(r"\]\(([^)]+)\)", replace, prose))
 
 
 def absolutise_reference_definitions(text):
@@ -370,11 +423,8 @@ def absolutise_reference_definitions(text):
     absolutise_image_targets runs before absolutise_links.
     """
     out = []
-    fenced = False
-    for line in text.split("\n"):
-        if line.lstrip().startswith("```"):
-            fenced = not fenced
-        elif not fenced:
+    for line, fenced in fence_map(text.split("\n")):
+        if not fenced:
             match = REFERENCE.match(line)
             if match and not ABSOLUTE.match(match.group(2)):
                 base = RAW if IMAGE_EXTENSION.search(match.group(2)) else BLOB
@@ -386,6 +436,10 @@ def absolutise_reference_definitions(text):
 def render():
     with io.open(README, encoding="utf-8") as handle:
         lines = handle.read().replace("\r\n", "\n").split("\n")
+
+    # Checked against the README first, so an unclosed fence is reported by its README
+    # line number rather than by a line of the partly transformed output.
+    fence_map(lines, "README.md")
 
     lines = strip_html_blocks(lines)
     lines = strip_title(lines)

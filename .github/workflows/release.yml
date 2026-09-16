@@ -197,8 +197,9 @@ jobs:
       #   stable       ## [X.Y.Z] is REQUIRED; without it the run fails.
       #   pre-release  ## [X.Y.Z-pre.N], else ## [X.Y.Z], else ## [Unreleased], else a fixed
       #                sentence saying no section was written.
-      # A pre-release is cut from main while the work is still under [Unreleased], so that
-      # section is the honest description of what it contains. The notes never say "see the
+      # A pre-release takes its own section first, then its base version's section, which
+      # holds the work aimed at that version, and falls back to [Unreleased] only when
+      # neither exists, then to the fixed sentence. The notes never say "see the
       # GitHub release": on GitHub that points at itself, and on a registry it points at a
       # page carrying the same text.
       #

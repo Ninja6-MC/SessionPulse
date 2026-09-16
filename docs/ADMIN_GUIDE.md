@@ -32,18 +32,35 @@ Minecraft 1.20.4 through 1.21.11.
 Paper, Spigot and Folia are each exercised by the project's CI. Purpur is a Paper fork;
 the plugin is expected to run there, but CI does not test it.
 
-No release has been tagged yet, so there is no jar to download. Until there is, build it
-from source or take the shaded jar from a CI run's build artifacts.
+Download `SessionPulse-<version>.jar` from
+[GitHub Releases](https://github.com/Ninja6-MC/SessionPulse/releases). Every version
+before 1.0.0 is a pre-release and is listed there marked *Pre-release*; 1.0.0 will be the
+first stable one, so expect configuration keys and behaviour to change between versions
+until then, and read the changelog before upgrading. Alpha builds are published as GitHub
+pre-releases and as Modrinth alpha versions, and never on Hangar; beta builds are also
+published to Hangar's Beta channel.
 
-To build from source:
+Each jar on GitHub Releases has a `.sha256` file beside it. Download both into the same
+directory and check the jar before installing it:
+
+```bash
+sha256sum -c SessionPulse-<version>.jar.sha256
+```
+
+On Windows, compare the hash printed by `Get-FileHash SessionPulse-<version>.jar` in
+PowerShell with the one in the `.sha256` file.
+
+If no published jar suits you, build it from source instead:
 
 ```bash
 ./gradlew build
 ```
 
-The shaded jar appears under `build/libs/`. Drop it into your server's `plugins/`
-directory and start the server. On first start the plugin writes
-`plugins/SessionPulse/config.yml`; `data.yml` is created by the first flush.
+The shaded jar appears under `build/libs/`.
+
+Drop the jar into your server's `plugins/` directory and start the server. On first start
+the plugin writes `plugins/SessionPulse/config.yml`; `data.yml` is created by the first
+flush.
 
 EssentialsX is an optional soft dependency. If it is present, SessionPulse can use its
 AFK state; if it is absent, the built-in idle timer is used instead. See
