@@ -66,6 +66,12 @@ import java.util.function.Supplier;
  * against 4.26.1. Adventure keeps binary compatibility within 4.x, and the boot legs link
  * the console path on every run, but <b>no automated check exercises the player facets</b>;
  * nothing joins a CI server.
+ *
+ * <p>That version gap is why no delivery here passes a {@code Sound.Emitter}. The platform's
+ * {@code CraftBukkitFacet$EntitySound} and {@code $EntitySound_1_19_3}, the only facets that
+ * can carry one, are skipped on 26.x; the emitter-less {@code SoundWithCategory} facet is the
+ * one that applies everywhere, and it plays at the audience's own position. An emitter-taking
+ * call would match no facet on 26.x and be dropped without a word.
  */
 public final class Notifier {
 
@@ -230,6 +236,10 @@ public final class Notifier {
     /**
      * A sound at the player's own position.
      *
+     * <p>Delivered through the emitter-less {@code playSound(Sound)}: it is the only overload
+     * an applicable facet backs on 26.x, and it already plays where the audience stands. See
+     * the class javadoc for the facet the emitter-taking overloads would have needed.
+     *
      * @param player the recipient; call on its region thread
      * @param sound  the sound, or {@code null} for silence
      */
@@ -298,7 +308,8 @@ public final class Notifier {
      * <p>Sends a chat line, an action bar, a title and a sound to the console through exactly
      * the render methods a player gets. The console discards the last three; linking them is
      * the point, so an Adventure API / platform mismatch fails a boot leg instead of the
-     * first milestone on a live server. The sound matters most: {@link #renderSound} calls
+     * first milestone on a live server. The sound links Adventure's {@code playSound(Sound)},
+     * the same emitter-less call a player gets. It matters most: {@link #renderSound} calls
      * {@code Sound#getKey()}, compiled against the 1.20.4 enum, and on 1.21.x {@link Sound}
      * is an interface. Does nothing while closed, and skips each {@code null}.
      *
@@ -440,6 +451,6 @@ public final class Notifier {
     }
 
     private void deliverSound(Audience audience, Sound sound) {
-        audience.playSound(renderSound(sound), net.kyori.adventure.sound.Sound.Emitter.self());
+        audience.playSound(renderSound(sound));
     }
 }
