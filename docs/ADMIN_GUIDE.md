@@ -213,6 +213,9 @@ What matters operationally:
   that can fire.
 - Where an overtime point lands on a milestone minute, the milestone is delivered first
   on all of its channels, and the overtime chat line after it.
+- Write short thresholds with `<minutes>`, not `<hours>`: `<hours>` is truncated to one
+  decimal, so a 20-minute milestone reads `0.3` and anything under 6 minutes reads `0.0`.
+  See [Placeholders](CONFIG.md#9-placeholders).
 - Players holding `sessionpulse.exempt` receive neither.
 
 If an entry never fires, check the log for a warning naming it by its position in the
