@@ -21,7 +21,10 @@ Part of the [Ninja6-MC](https://github.com/Ninja6-MC) plugin suite.
 
 ## Status
 
-🚧 **Under Development** — not yet released.
+🚧 **Pre-release** — the features below are implemented and exercised by CI, but no
+version has been tagged yet. Once the first tag is cut, builds will appear on
+[GitHub Releases](https://github.com/Ninja6-MC/SessionPulse/releases). Until then,
+build from source or take the jar from a CI run.
 
 ---
 
@@ -32,7 +35,7 @@ non-intrusive health reminders — hydration, posture, eye breaks — at milesto
 you define. It never kicks anyone by default; enforcement is an optional layer for
 servers that want structured rest breaks (families, schools, wellness communities).
 
-### Features (planned)
+### Features
 
 - **Configurable milestones** — any number of one-time alerts keyed by session minute.
 - **Recurring overtime** — optional repeating reminders after a threshold (marathon safety net).
@@ -41,6 +44,38 @@ servers that want structured rest breaks (families, schools, wellness communitie
 - **Multi-platform** — Paper, Spigot, Purpur, Folia via FoliaLib + Adventure.
 - **Rich formatting** — MiniMessage on all platforms, action bar, sound, optional title.
 - **Folia-ready** — region-safe schedulers throughout.
+
+---
+
+## Install
+
+SessionPulse requires **Java 21**.
+
+No version has been tagged yet, so there is no jar to download. Build one from source:
+
+```bash
+./gradlew build
+```
+
+The shaded jar is written to `build/libs/`. Alternatively, take it from the build
+artifacts of a CI run on `main`.
+
+Drop the jar into your server's `plugins/` directory and start the server.
+`plugins/SessionPulse/config.yml` is generated on that first start, with every setting
+at its default — enforcement off, two health milestones, overtime off. Edit it and run
+`/spulse reload`; nothing in it needs a restart.
+
+EssentialsX is an optional soft dependency: where it is installed, SessionPulse can use
+its AFK state, and where it is not, a built-in idle timer is used instead.
+
+---
+
+## Documentation
+
+- [Configuration Reference](docs/CONFIG.md) — every key in `config.yml`, its range and
+  default, and what happens to a value that cannot be used.
+- [Admin Guide](docs/ADMIN_GUIDE.md) — commands, permissions, the counted window, AFK
+  detection, enabling enforcement safely, stored data and troubleshooting.
 
 ---
 
