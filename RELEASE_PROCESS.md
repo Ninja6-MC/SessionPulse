@@ -189,7 +189,12 @@ Set them only if a registry project is created under a different slug.
 Publishing is **not atomic**. The GitHub release is created first; after it, the Modrinth
 and Hangar steps are independent of each other, and whatever succeeded stays published.
 
-**Prefer "Re-run failed jobs"** on the failed workflow run. The job runs again from the
+**If only the Hangar page sync failed**, the version is already published: go straight to
+the manual sync command under *Hangar resource page* below. A re-run fails at the
+duplicate Hangar upload and never reaches the sync, and it would also replace the jar and
+`.sha256` on the GitHub release.
+
+Otherwise, **prefer "Re-run failed jobs"** on the failed workflow run. The job runs again from the
 start on a fresh runner: it re-tests and rebuilds the jar there, replaces the jar and
 `.sha256` on the GitHub release with the rebuilt pair, and tries both registries again.
 The registry that succeeded the first time rejects the duplicate version and that step

@@ -19,10 +19,10 @@
 # sense on github.com and enforces the rule that got that submission rejected. One output
 # serves both stores.
 #
-# What it does NOT do: upload anything. Publishing the result is a manual paste into the
-# Modrinth description editor and the Hangar resource page. On Modrinth, an edit alone
-# does not re-enter the moderation queue, so a rejected project also needs "Resubmit for
-# review". See RELEASE_PROCESS.md.
+# What it does NOT do: upload anything. The release workflow syncs the result to the
+# Hangar resource page; Modrinth is a manual paste into its description editor, where an
+# edit alone does not re-enter the moderation queue, so a rejected project also needs
+# "Resubmit for review". See RELEASE_PROCESS.md.
 
 import argparse
 import io
@@ -90,8 +90,8 @@ class ReadmeError(ValueError):
 
 HEADER = (
     "<!-- Generated from README.md by scripts/store-description.py. Do not edit.\n"
-    "     Paste everything below this comment into the Modrinth description editor\n"
-    "     and the Hangar resource page. -->\n"
+    "     Paste everything below this comment into the Modrinth description editor.\n"
+    "     The release workflow syncs it to the Hangar resource page. -->\n"
 )
 
 # Prose characters the README uses that have no business in a store description we want

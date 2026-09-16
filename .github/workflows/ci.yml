@@ -118,8 +118,9 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # docs/store-description.md is the text pasted into the Modrinth and Hangar project
-  # pages, and it is generated from README.md. It is committed rather than generated on
+  # docs/store-description.md is the Modrinth and Hangar project description, pasted into
+  # Modrinth by hand and synced to Hangar by the release workflow, and it is generated from
+  # README.md. It is committed rather than generated on
   # demand so the wording that reaches the stores is reviewable in the pull request that
   # changes it.
   #
