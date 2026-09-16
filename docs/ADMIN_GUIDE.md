@@ -37,8 +37,8 @@ Download `SessionPulse-<version>.jar` from
 before 1.0.0 is a pre-release and is listed there marked *Pre-release*; 1.0.0 will be the
 first stable one, so expect configuration keys and behaviour to change between versions
 until then, and read the changelog before upgrading. Alpha builds are published as GitHub
-pre-releases and as Modrinth alpha versions, and never on Hangar; beta builds are also
-published to Hangar's Beta channel.
+pre-releases, as Modrinth alpha versions and to Hangar's Alpha channel, which Hangar
+hides by default; beta builds go to Modrinth's beta and Hangar's Beta channels.
 
 Each jar on GitHub Releases has a `.sha256` file beside it. Download both into the same
 directory and check the jar before installing it:

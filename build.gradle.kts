@@ -144,10 +144,9 @@ val releaseGameVersions =
 // release workflow can set it per tag, and nothing here runs during a build or a test:
 // `./gradlew tasks --all` lists publishPluginPublicationToHangar with no token present.
 //
-// Hangar is skipped for alpha tags by the workflow, not here, per the tier table in
-// RELEASE_PROCESS.md. SpiralGenesis publishes alphas to a Hangar Alpha channel; this
-// project deliberately does not, so the channel default below is only ever overridden
-// with Beta or Release.
+// The workflow picks the channel per tag, per the tier table in RELEASE_PROCESS.md, as
+// SpiralGenesis does: Alpha for alpha tags, Beta for beta and rc tags, Release for stable
+// tags. The default below applies only to a local invocation without -PhangarChannel.
 hangarPublish {
     publications.register("plugin") {
         // The workflow passes the HANGAR_PROJECT repository variable, or SessionPulse.

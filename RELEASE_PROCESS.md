@@ -16,9 +16,12 @@ Every release follows `MAJOR.MINOR.PATCH[-PRERELEASE]`:
   * `v1.0.0-rc.1` (Release candidate)
 
 **Before 1.0.0, every release is a pre-release.** Alphas are for internal testing and
-betas for public testing; `1.0.0` is the first stable release. Do not push an unsuffixed
-tag below `v1.0.0`: `release.yml` publishes every unsuffixed tag as a stable release, as
-*Latest* on GitHub and on the *release* channel of Modrinth and Hangar.
+betas for public testing; `1.0.0` is the first stable release. Alphas are still public:
+each one is a GitHub pre-release, is published to Hangar's *Alpha* channel, which is
+marked unstable and hidden by default, and reaches Modrinth's *alpha* channel once the
+Modrinth project is approved. Do not push an unsuffixed tag below `v1.0.0`: `release.yml`
+publishes every unsuffixed tag as a stable release, as *Latest* on GitHub and on the
+*release* channel of Modrinth and Hangar.
 
 ---
 
@@ -38,10 +41,10 @@ there is no separate release branch.
    ┌─────────────────────────┐                 ┌─────────────────────────┐
    │  ALPHA (vX.Y.Z-alpha.N) │                 │  BETA / RC (-beta, -rc) │
    │ • Experimental          │                 │ • Feature-Complete      │
-   │ • Internal / Staging    │                 │ • Public Testing        │
+   │ • Internal Testing      │                 │ • Public Testing        │
    │ • GitHub Pre-release    │                 │ • GitHub Pre-release    │
    │ • Modrinth alpha        │                 │ • Modrinth beta         │
-   │                         │                 │ • Hangar Beta           │
+   │ • Hangar Alpha          │                 │ • Hangar Beta           │
    └────────────┬────────────┘                 └────────────┬────────────┘
                 │                                           │
                 └─────────────────────┬─────────────────────┘
@@ -58,7 +61,7 @@ there is no separate release branch.
 
 | Tier | Git Tag Pattern | Source Branch | Stability Level | Published Channels |
 | :--- | :--- | :--- | :--- | :--- |
-| **Alpha** | `vX.Y.Z-alpha.N` | `main` | Experimental | GitHub Releases (*Pre-release*), Modrinth (*alpha*) |
+| **Alpha** | `vX.Y.Z-alpha.N` | `main` | Experimental | GitHub Releases (*Pre-release*), Modrinth (*alpha*), Paper Hangar (*Alpha*) |
 | **Beta / RC** | `vX.Y.Z-beta.N`, `vX.Y.Z-rc.N` | `main` | Feature-Complete | GitHub Releases (*Pre-release*), Modrinth (*beta*), Paper Hangar (*Beta*) |
 | **Market (GA)** | `vX.Y.Z` | `main` | Production Stable | GitHub Releases (*Latest*), Modrinth (*release*), Paper Hangar (*Release*), SpigotMC (*manual*) |
 
@@ -68,9 +71,11 @@ Notes on the table:
   Featuring it on the project page is done by hand on Modrinth afterwards.
 * **SpigotMC is manual.** SpigotMC has no upload API; post the GA jar from the GitHub
   release as a resource update yourself.
-* **Alpha skips Hangar.** Alphas go to GitHub and Modrinth only. SpiralGenesis differs: it
-  publishes alphas to a Hangar *Alpha* channel. SessionPulse's Hangar project needs only
-  *Beta* and *Release* channels.
+* **Alphas publish to Hangar's *Alpha* channel**, as in SpiralGenesis. Hangar marks that
+  channel unstable and hides it by default, so an alpha is public but is listed in the
+  Versions tab only when the *Alpha* channel filter is selected.
+* **The Hangar channels must exist first.** The Hangar project needs channels named
+  exactly `Alpha`, `Beta` and `Release`; the workflow selects the channel by name.
 * **Release candidates publish as beta.** Neither registry has a release-candidate tier.
 
 ---
@@ -133,9 +138,9 @@ GitHub Actions (`.github/workflows/release.yml`) will:
    filename so `sha256sum -c` works beside the downloaded jar).
 8. Publish the jar, the checksum and the notes to GitHub Releases, as a pre-release for
    `-alpha`, `-beta` and `-rc` tags and as the latest release for a stable tag.
-9. Publish to Modrinth and to Paper Hangar (beta, rc and stable only). Once the GitHub
-   release exists the two registries are independent: a Modrinth failure fails the run
-   but does not stop the Hangar step.
+9. Publish to Modrinth and to Paper Hangar. Once the GitHub release exists the two
+   registries are independent: a Modrinth failure fails the run but does not stop the
+   Hangar step.
 
 **Requires Java 21.** The plugin is built for Java 21 and declares it on Modrinth; every
 server must run on Java 21 or newer to load it, including 1.20.4-1.20.6, which
@@ -191,7 +196,7 @@ If a re-run is not possible, publish the failed registry by hand:
   workflow uses. This keeps the bytes matching the release's `.sha256`.
 * **Hangar:** from a checkout of the tagged commit, with `HANGAR_API_TOKEN` set and the
   release notes saved as `build/release-notes.md`, run
-  `./gradlew publishPluginPublicationToHangar -PpluginVersion=<version> -PhangarChannel=<Beta|Release> -PhangarProject=<HANGAR_PROJECT or SessionPulse>`.
+  `./gradlew publishPluginPublicationToHangar -PpluginVersion=<version> -PhangarChannel=<Alpha|Beta|Release> -PhangarProject=<HANGAR_PROJECT or SessionPulse>`.
   The task rebuilds the jar locally, so the bytes uploaded to Hangar will not match the
   `.sha256` on the GitHub release. Without `build/release-notes.md` the Hangar changelog
   falls back to "No changelog section was written for this pre-release."
