@@ -118,6 +118,40 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # docs/store-description.md is the text pasted into the Modrinth and Hangar project
+  # pages, and it is generated from README.md. It is committed rather than generated on
+  # demand so the wording that reaches the stores is reviewable in the pull request that
+  # changes it.
+  #
+  # This job is why it stays true. A hand-pasted store body is a copy of the README that
+  # nobody can diff; SpiralGenesis's went three weeks stale and was rejected by Modrinth on
+  # 2026-09-05 over a markdown rule - a '#' beginning a line inside a YAML code fence -
+  # that no reviewer could have caught, because the text under review existed only on
+  # modrinth.com. The generator enforces the shape that got that submission rejected - a
+  # line-initial '#', a relative link, a stray non-ASCII character - rather than rule 2.2
+  # in general, which is not mechanically checkable. This job enforces the generator.
+  #
+  # A separate job rather than a step in Build and Test: it needs no Java and no Gradle,
+  # and a stale description should report as itself, not as a failed build. No paths
+  # filter either: a few seconds of Python with no network fetch costs less than the
+  # workflow complexity a filter adds, and a path-scoped check could never be required.
+  description:
+    name: Store Description
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # --check regenerates from README.md, re-runs the content-rule assertions, and
+      # fails if either the committed file or the README has drifted away from what the
+      # store page is allowed to contain.
+      - name: Fail If The Committed Description Drifted
+        run: python3 scripts/store-description.py --check
+
   # The scheduler issue's own Done-when, run in CI rather than asserted in a PR
   # description: does a jar carrying a relocated FoliaLib and a relocated Adventure
   # actually come up? The relocation is the highest-uncertainty decision in this

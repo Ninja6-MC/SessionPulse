@@ -188,3 +188,19 @@ If a re-run is not possible, publish the failed registry by hand:
 The Minecraft versions declared to both registries are one explicit list, kept in
 `build.gradle.kts` (`releaseGameVersions`) and in `release.yml` (`game-versions`): 1.20.4
 to 1.20.6 and 1.21 to 1.21.11. Edit both together.
+
+### Store Descriptions
+
+The project descriptions on Modrinth and Hangar are not written by the release workflow.
+Both are generated from `README.md` into `docs/store-description.md` by
+`scripts/store-description.py`, and CI fails when the committed file is out of date with
+the README or breaks the store content checks. Edit the README, run
+`python scripts/store-description.py`, and commit both files together.
+
+* **Modrinth** is a manual paste. `mc-publish` uploads versions and their changelogs and
+  has no description input. Copy everything below the generated comment at the top of
+  `docs/store-description.md` into the project's description editor on Modrinth.
+  Editing a description does **not** re-enter the review queue: if the project was
+  rejected, fix the description and then use *Resubmit for review*, or it stays rejected.
+* **Hangar** is currently also pasted by hand, the same text into the resource page.
+  Syncing it from the release workflow is tracked in #67.

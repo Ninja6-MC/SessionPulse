@@ -5,13 +5,25 @@ Identity assets for **SessionPulse**, conforming to the Ninja6-MC brand identity
 linked, because a link there 404s for anyone without access, and GitHub resolves relative
 links only within a single repository so a sibling-repo path cannot work either).
 
-> **This directory is hand-maintained.** Do not confuse it with `assets/` at the
-> repository root, which is delivered by pull request from
-> `.github/workflows/sync-assets.yml` in the `brand` repository, and is overwritten on
-> every sync — its
-> master is `src/ninja6-master.svg` there, not anything in this repository. A
-> repository's own artwork lives here; the shared organisation marks live there. See
-> `N6-REPO-03` in the org standards register.
+## Two Directories, Opposite Rules
+
+Two directories hold artwork, and they have opposite rules.
+
+**`docs/assets/`** (this directory) is **this repository's own** icon suite, authored here
+and generated from [`icon-master.svg`](icon-master.svg) via
+[`scripts/export-icons.mjs`](../../scripts/export-icons.mjs). Edit the master and
+re-export; do not edit a generated file.
+
+**[`assets/`](../../assets/)** at the repository root holds the **shared organisation
+marks** and is **machine-managed**. It is delivered by pull request from
+`.github/workflows/sync-assets.yml` in the organisation's `brand` repository, and its
+master is `src/ninja6-master.svg` there, not anything in this repository. Anything
+hand-edited in it is overwritten by the next sync, so changes to those marks belong in
+`brand`. See `N6-REPO-03` in the org standards register.
+
+Both conform to the Ninja6-MC brand identity system. (That system lives in the
+organisation's private `brand` repository, so it is named rather than linked - a link
+would 404 for everyone reading this.)
 
 ## Authoring Source
 
