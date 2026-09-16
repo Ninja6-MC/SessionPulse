@@ -17,20 +17,57 @@
     jar it leaves at run\spigot-<Version>.jar is reused after that. Delete the jar to
     rebuild it.
 
+    run\ persists across platform and version switches, and that is what makes difficulty
+    awkward: difficulty=peaceful is forced into run\server.properties on every boot, but a
+    world generated earlier keeps its difficulty in level.dat and ignores the property
+    (verified on Paper 26.2 - the property fixes NEW worlds only). -Fresh deletes
+    run\world* so the next boot generates one that honours it, and -Op writes run\ops.json
+    so /difficulty peaceful can be typed in game against the world that is already there.
+
 .PARAMETER Platform
     paper (default), folia or spigot.
 
 .PARAMETER Version
     Minecraft version, default 1.20.4.
 
+.PARAMETER Op
+    Minecraft name to op at level 4 in run\ops.json, overwritten on every run. The UUID is
+    the offline one: RFC-4122 v3 (MD5) over the UTF-8 bytes of "OfflinePlayer:<name>",
+    which is what UUID.nameUUIDFromBytes gives the server in offline mode.
+
+.PARAMETER Fresh
+    Delete run\world* before booting, so the world is generated again at peaceful.
+
 .EXAMPLE
     .\scripts\dev-server.ps1 -Platform folia -Version 1.21.11
+
+.EXAMPLE
+    .\scripts\dev-server.ps1 -Op TheGoldenDragon -Fresh
 #>
 [CmdletBinding()]
 param(
     [ValidateSet('paper', 'folia', 'spigot')]
     [string]$Platform = 'paper',
-    [string]$Version = '1.20.4'
+    # Rejected here rather than at the fill API, which is where an empty version would
+    # otherwise surface, a long way from the cause. dev-server.sh rejects one the same way.
+    [ValidateNotNullOrEmpty()]
+    [string]$Version = '1.20.4',
+    # Mirrors the [A-Za-z0-9_]{1,16} name check dev-server.sh does on --op, down to the
+    # wording of the message. 5.1's ValidatePattern has no ErrorMessage property - that
+    # arrived in PowerShell 6 - and a ValidateScript that merely returns $false prints its
+    # own source, so the message is thrown. A repeated -Op never reaches this: the binder
+    # refuses a named parameter given twice. `-?` prints the comment-based help above,
+    # which is this script's equivalent of the shell's --help.
+    [ValidateScript({
+        if ($_ -match '^[A-Za-z0-9_]{1,16}$') {
+            $true
+        }
+        else {
+            throw "error: -Op needs a Minecraft name matching [A-Za-z0-9_]{1,16}, not '$_'"
+        }
+    })]
+    [string]$Op,
+    [switch]$Fresh
 )
 
 $ErrorActionPreference = 'Stop'
@@ -134,6 +171,29 @@ else {
 # ---------------------------------------------------------------------------
 # Server configuration
 # ---------------------------------------------------------------------------
+if ($Fresh) {
+    # world, world_nether and world_the_end on all three platforms. Directories only, so a
+    # world.zip backup sitting in run\ is left alone; dev-server.sh restricts itself the
+    # same way. A non-default level-name is not covered by the wildcard and has to be
+    # deleted by hand; handling it would mean parsing the very file this script is about to
+    # rewrite.
+    #
+    # @() materialises the whole listing before anything is deleted. Deleting inside the
+    # pipeline mutates the directory Get-ChildItem is still enumerating, and a later entry
+    # such as world_the_end can be skipped and survive the wipe.
+    $Worlds = @(Get-ChildItem -Path $RunDir -Filter 'world*' -Directory -ErrorAction SilentlyContinue)
+    if ($Worlds.Count -gt 0) {
+        Write-Host '==> Removing generated worlds'
+        foreach ($World in $Worlds) {
+            Write-Host "    $($World.Name)"
+            Remove-Item -Recurse -Force $World.FullName
+        }
+    }
+    else {
+        Write-Host '==> No generated worlds to remove'
+    }
+}
+
 # ASCII without a BOM: the server reads these as Java properties, and 5.1's UTF8 encoding
 # writes a BOM that would become part of the first key.
 [IO.File]::WriteAllText((Join-Path $RunDir 'eula.txt'), "eula=true`n")
@@ -151,8 +211,66 @@ simulation-distance=6
 spawn-protection=0
 max-players=10
 motd=SessionPulse dev server
+difficulty=peaceful
 '@
     [IO.File]::WriteAllText($Props, ($Text -replace "`r`n", "`n") + "`n")
+}
+
+# Forced on every boot rather than only on the first: the heredoc above is write-once, and
+# the server rewrites the whole file at shutdown, so an existing run\ would otherwise keep
+# whatever difficulty it was left with. Only this one key is touched.
+#
+# A server-touched server.properties is CRLF throughout, and `.*$` swallows the CR, so the
+# rewritten difficulty line alone comes back LF in an otherwise CRLF file.
+# java.util.Properties does not care - it accepts either terminator.
+#
+# A commented-out #difficulty=... is deliberately not matched by the `^difficulty=` anchor:
+# the real key is appended instead and the comment is left exactly as it was.
+$PropsText = [IO.File]::ReadAllText($Props)
+if ($PropsText -match '(?m)^difficulty=') {
+    $PropsText = $PropsText -replace '(?m)^difficulty=.*$', 'difficulty=peaceful'
+}
+else {
+    # A file whose last character is not a newline would glue the key onto the previous
+    # value, so prepend one.
+    if ($PropsText.Length -gt 0 -and -not $PropsText.EndsWith("`n")) {
+        $PropsText = $PropsText + "`n"
+    }
+    $PropsText = $PropsText + "difficulty=peaceful`n"
+}
+[IO.File]::WriteAllText($Props, $PropsText)
+
+if (-not [string]::IsNullOrEmpty($Op)) {
+    # The offline UUID the server derives for an unauthenticated join:
+    # UUID.nameUUIDFromBytes("OfflinePlayer:<name>"), i.e. RFC-4122 v3 - MD5 over the UTF-8
+    # bytes with no namespace prefix, byte 6 forced to version 3 and byte 8 to the RFC 4122
+    # variant. Not [guid]::new($Bytes): .NET reads the first three fields little-endian and
+    # would hand back a different UUID from the one the server computes.
+    $Md5 = [Security.Cryptography.MD5]::Create()
+    try {
+        $Bytes = $Md5.ComputeHash([Text.Encoding]::UTF8.GetBytes("OfflinePlayer:$Op"))
+    }
+    finally {
+        $Md5.Dispose()
+    }
+    $Bytes[6] = [byte](($Bytes[6] -band 0x0f) -bor 0x30)
+    $Bytes[8] = [byte](($Bytes[8] -band 0x3f) -bor 0x80)
+    $Hex = -join ($Bytes | ForEach-Object { $_.ToString('x2') })
+    $OpUuid = $Hex -replace '^(.{8})(.{4})(.{4})(.{4})(.{12})$', '$1-$2-$3-$4-$5'
+    # Overwritten every run, so any other operator in the file is dropped. The banner below
+    # carries the warning about a server that is still running rewriting this at shutdown.
+    # bypassesPlayerLimit is false to mirror exactly what the server itself writes.
+    $OpsText = @"
+[
+  {
+    "uuid": "$OpUuid",
+    "name": "$Op",
+    "level": 4,
+    "bypassesPlayerLimit": false
+  }
+]
+"@
+    [IO.File]::WriteAllText((Join-Path $RunDir 'ops.json'), ($OpsText -replace "`r`n", "`n") + "`n")
 }
 
 Copy-Item -Force $PluginJar.FullName (Join-Path $RunDir 'plugins')
@@ -162,6 +280,14 @@ Copy-Item -Force $PluginJar.FullName (Join-Path $RunDir 'plugins')
 # ---------------------------------------------------------------------------
 Write-Host ''
 Write-Host "==> Starting $Platform $Version. Type ``stop`` to shut down."
+Write-Host '    difficulty is forced to peaceful in run\server.properties, but a world that'
+Write-Host '    already exists keeps its own difficulty in level.dat and ignores the property.'
+Write-Host '    -Fresh deletes run\world* so the next world honours it.'
+if (-not [string]::IsNullOrEmpty($Op)) {
+    Write-Host "    $Op is op (level 4) via run\ops.json, so /difficulty peaceful works in game."
+    Write-Host '    A server already running against run\ rewrites ops.json at its own shutdown,'
+    Write-Host '    which puts the old file back; stop that one first if the op does not stick.'
+}
 Write-Host ''
 
 Set-Location $RunDir

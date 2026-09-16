@@ -111,9 +111,14 @@ adheres to [Semantic Versioning](https://semver.org/).
   1.20.4 legs remain boot-only.
 - `SessionPulseProbeBot`, the MCProtocolLib client behind it, built by the
   `botClientJar` task into `build/test-fixtures` and never wired into `build`.
-- A platform argument for `scripts/dev-server.sh` (`[paper|folia] [mc-version]`, with
-  the old version-only form still booting Paper), and `scripts/dev-server.ps1`, the
-  same dev server for Windows PowerShell 5.1.
+- A platform argument for `scripts/dev-server.sh` (`[paper|folia|spigot] [mc-version]`,
+  with the old version-only form still booting Paper), and `scripts/dev-server.ps1`, the
+  same dev server for Windows PowerShell 5.1. Both force `difficulty=peaceful` into
+  `run/server.properties` on every boot, so a test session is not interrupted by hostile
+  mobs. A world that already exists keeps its difficulty in `level.dat` and ignores the
+  property, so `--fresh`/`-Fresh` deletes `run/world*` and `--op`/`-Op` writes
+  `run/ops.json` with the player's offline UUID, which makes `/difficulty peaceful`
+  available in game.
 - A Spigot 1.21.11 leg in the smoke matrix, playing the same scripted session as the
   Paper and Folia legs. The server jar is built with BuildTools on the runner and kept in
   the repository's Actions cache, keyed by the BuildTools build, so a warm run does not

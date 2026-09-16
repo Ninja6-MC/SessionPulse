@@ -3,12 +3,24 @@
 # Boots a local Paper, Folia or Spigot server with the freshly built plugin installed, for
 # manual testing of session tracking, reminders and the /spulse command.
 #
-# Usage: scripts/dev-server.sh [paper|folia|spigot] [mc-version]
+# Usage: scripts/dev-server.sh [paper|folia|spigot] [mc-version] [--op <name>] [--fresh]
 #
-# Both arguments are optional and the platform defaults to paper. A first argument that
-# starts with a digit is read as the version, so the old one-argument form
-# `scripts/dev-server.sh 1.21.11` still boots Paper. The smoke matrix is CI's job, not
-# this script's; scripts/dev-server.ps1 is the same thing for Windows PowerShell.
+# Both positional arguments are optional and the platform defaults to paper. A first
+# positional that starts with a digit is read as the version, so the old one-argument form
+# `scripts/dev-server.sh 1.21.11` still boots Paper. Flags may come before, between or
+# after the positionals, matching what PowerShell's binder accepts, and `-h`/`--help`
+# prints the usage line. The smoke matrix is CI's job, not this script's;
+# scripts/dev-server.ps1 is the same thing for Windows PowerShell.
+#
+# run/ persists across platform and version switches, and that is what makes difficulty
+# awkward: `difficulty=peaceful` is forced into run/server.properties on every boot, but a
+# world generated earlier keeps its difficulty in level.dat and ignores the property
+# (verified on Paper 26.2 - the property fixes NEW worlds only). `--fresh` deletes
+# run/world* so the next boot generates one that honours it, and `--op <name>` writes
+# run/ops.json so `/difficulty peaceful` can be typed in game against the world that is
+# already there. The op's UUID is the offline one: RFC-4122 v3 (MD5) over the UTF-8 bytes
+# of "OfflinePlayer:<name>", which is what UUID.nameUUIDFromBytes gives the server in
+# offline mode.
 #
 # The world is flat and unseeded, unlike SpiralGenesis's dev server, which needs real
 # generated terrain because it allocates spawns. SessionPulse counts seconds and sends
@@ -27,10 +39,62 @@
 
 set -euo pipefail
 
+USAGE="usage: scripts/dev-server.sh [paper|folia|spigot] [mc-version] [--op <name>] [--fresh]"
+
+OP_NAME=""
+FRESH=0
+POSITIONAL=()
+
+# One pass: flags are recognised wherever they appear and everything else is set aside as
+# a positional, so `--fresh paper` and `paper --fresh` both work. PowerShell's binder
+# already accepts either order, and this is what makes the two scripts agree.
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h | --help)
+            echo "$USAGE"
+            exit 0
+            ;;
+        --op)
+            # A second --op is an error rather than a silent last-one-wins; the PowerShell
+            # binder rejects a repeated -Op for us.
+            if [[ -n "$OP_NAME" ]]; then
+                echo "error: --op given more than once" >&2
+                exit 2
+            fi
+            OP_NAME="${2:-}"
+            if [[ ! "$OP_NAME" =~ ^[A-Za-z0-9_]{1,16}$ ]]; then
+                echo "error: --op needs a Minecraft name matching" \
+                    "[A-Za-z0-9_]{1,16}, not '$OP_NAME'" >&2
+                exit 2
+            fi
+            shift 2
+            ;;
+        --fresh)
+            if [[ "$FRESH" == 1 ]]; then
+                echo "error: --fresh given more than once" >&2
+                exit 2
+            fi
+            FRESH=1
+            shift
+            ;;
+        -*)
+            echo "error: unknown argument '$1'" >&2
+            echo "$USAGE" >&2
+            exit 2
+            ;;
+        *)
+            POSITIONAL+=("$1")
+            shift
+            ;;
+    esac
+done
+
+# A leading digit is the version, so the old `dev-server.sh 1.21.11` form still boots Paper.
 PLATFORM="paper"
-if [[ $# -gt 0 && ! "$1" =~ ^[0-9] ]]; then
-    PLATFORM="$1"
-    shift
+MC_VERSION="1.20.4"
+if [[ ${#POSITIONAL[@]} -gt 0 && ! "${POSITIONAL[0]}" =~ ^[0-9] ]]; then
+    PLATFORM="${POSITIONAL[0]}"
+    POSITIONAL=("${POSITIONAL[@]:1}")
 fi
 case "$PLATFORM" in
     paper | folia | spigot) ;;
@@ -39,7 +103,23 @@ case "$PLATFORM" in
         exit 2
         ;;
 esac
-MC_VERSION="${1:-1.20.4}"
+
+if [[ ${#POSITIONAL[@]} -gt 0 ]]; then
+    # Rejected the way an empty platform is: an empty version would otherwise be sent
+    # to the fill API as a version and fail there, much further from the cause.
+    if [[ -z "${POSITIONAL[0]}" ]]; then
+        echo "error: mc-version must not be empty" >&2
+        exit 2
+    fi
+    MC_VERSION="${POSITIONAL[0]}"
+    POSITIONAL=("${POSITIONAL[@]:1}")
+fi
+
+if [[ ${#POSITIONAL[@]} -gt 0 ]]; then
+    echo "error: unexpected argument '${POSITIONAL[0]}'" >&2
+    echo "$USAGE" >&2
+    exit 2
+fi
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUNDIR="$REPO_ROOT/run"
@@ -133,6 +213,32 @@ fi
 # ---------------------------------------------------------------------------
 # Server configuration
 # ---------------------------------------------------------------------------
+if [[ "$FRESH" == 1 ]]; then
+    # world, world_nether and world_the_end on all three platforms. Directories only, so a
+    # `world.zip` backup sitting in run/ is left alone; dev-server.ps1 restricts itself the
+    # same way. A non-default `level-name` is not covered by the glob and has to be deleted
+    # by hand; handling it would mean parsing the very file this script is about to
+    # rewrite. The quoting is load-bearing, and $RUNDIR cannot be empty here: `set -u` is
+    # on and it is assigned unconditionally above.
+    WORLDS=()
+    for CANDIDATE in "$RUNDIR"/world*; do
+        if [[ -d "$CANDIDATE" ]]; then
+            WORLDS+=("$CANDIDATE")
+        fi
+    done
+    if [[ ${#WORLDS[@]} -gt 0 ]]; then
+        # Matched first, then deleted: deleting inside the glob loop would be fine here,
+        # but this is the order dev-server.ps1 has to use and the two read the same.
+        echo "==> Removing generated worlds"
+        for WORLD in "${WORLDS[@]}"; do
+            echo "    $(basename "$WORLD")"
+            rm -rf "$WORLD"
+        done
+    else
+        echo "==> No generated worlds to remove"
+    fi
+fi
+
 echo "eula=true" > "$RUNDIR/eula.txt"
 
 # Written once so hand-edits survive; delete the file to regenerate it.
@@ -147,7 +253,59 @@ simulation-distance=6
 spawn-protection=0
 max-players=10
 motd=SessionPulse dev server
+difficulty=peaceful
 PROPS
+fi
+
+# Forced on every boot rather than only on the first: the heredoc above is write-once, and
+# the server rewrites the whole file at shutdown, so an existing run/ would otherwise keep
+# whatever difficulty it was left with. Only this one key is touched.
+#
+# A server-touched server.properties is CRLF throughout, and `.*` swallows the CR, so the
+# rewritten difficulty line alone comes back LF in an otherwise CRLF file. (Git Bash's
+# MSYS sed goes further and normalises every line to LF.) java.util.Properties does not
+# care either way - it accepts either terminator.
+#
+# A commented-out `#difficulty=...` is deliberately not matched by the `^difficulty=`
+# anchor: the real key is appended below and the comment is left exactly as it was.
+if grep -q '^difficulty=' "$RUNDIR/server.properties"; then
+    # Not `sed -i`: GNU takes it bare and BSD demands a suffix argument, so a temp file
+    # and a mv is the form that works in both places.
+    sed 's/^difficulty=.*/difficulty=peaceful/' "$RUNDIR/server.properties" \
+        > "$RUNDIR/server.properties.tmp"
+    mv "$RUNDIR/server.properties.tmp" "$RUNDIR/server.properties"
+else
+    # A file whose last byte is not a newline would glue the key onto the previous value,
+    # so prepend one. The substitution strips trailing newlines, so an empty result means
+    # the file already ends in one.
+    if [[ -s "$RUNDIR/server.properties" && -n "$(tail -c 1 "$RUNDIR/server.properties")" ]]; then
+        printf '\n' >> "$RUNDIR/server.properties"
+    fi
+    printf 'difficulty=peaceful\n' >> "$RUNDIR/server.properties"
+fi
+
+if [[ -n "$OP_NAME" ]]; then
+    # The offline UUID the server derives for an unauthenticated join:
+    # UUID.nameUUIDFromBytes("OfflinePlayer:<name>"), i.e. RFC-4122 v3 - MD5 over the
+    # UTF-8 bytes with no namespace prefix, byte 6 forced to version 3 and byte 8 to the
+    # RFC 4122 variant. md5sum is coreutils, as sha256sum above already assumes.
+    HEX="$(printf 'OfflinePlayer:%s' "$OP_NAME" | md5sum | cut -c1-32)"
+    B6="$(printf '%02x' "$(( 0x${HEX:12:2} & 0x0f | 0x30 ))")"
+    B8="$(printf '%02x' "$(( 0x${HEX:16:2} & 0x3f | 0x80 ))")"
+    OP_UUID="${HEX:0:8}-${HEX:8:4}-${B6}${HEX:14:2}-${B8}${HEX:18:2}-${HEX:20:12}"
+    # Overwritten every run, so any other operator in the file is dropped. The banner below
+    # carries the warning about a server that is still running rewriting this at shutdown.
+    # bypassesPlayerLimit is false to mirror exactly what the server itself writes.
+    cat > "$RUNDIR/ops.json" <<OPS
+[
+  {
+    "uuid": "$OP_UUID",
+    "name": "$OP_NAME",
+    "level": 4,
+    "bypassesPlayerLimit": false
+  }
+]
+OPS
 fi
 
 cp -f "$PLUGIN_JAR" "$RUNDIR/plugins/"
@@ -164,6 +322,20 @@ cat <<'BANNER'
 
     In game, /spulse prints its usage string: the command is declared with no executor
     until the command issue lands. That is expected, not a broken build.
+
+BANNER
+
+# Separate echoes rather than an unquoted heredoc: the block above is `<<'BANNER'` on
+# purpose, because it contains backticks and a $-free line that expansion would spoil.
+echo "    difficulty is forced to peaceful in run/server.properties, but a world that"
+echo "    already exists keeps its own difficulty in level.dat and ignores the property."
+echo "    --fresh deletes run/world* so the next world honours it."
+if [[ -n "$OP_NAME" ]]; then
+    echo "    $OP_NAME is op (level 4) via run/ops.json, so /difficulty peaceful works in game."
+    echo "    A server already running against run/ rewrites ops.json at its own shutdown,"
+    echo "    which puts the old file back; stop that one first if the op does not stick."
+fi
+cat <<'BANNER'
 
     Type `stop` to shut down.
 
