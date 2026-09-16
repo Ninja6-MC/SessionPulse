@@ -232,7 +232,8 @@ disconnected with `enforcement.kick-message`, and refused at pre-login until
 The order of operations when it fires: the exemption is checked, the configuration is
 re-checked, the session is confirmed to still be the live one, the cooldown is
 written, the counted window is reset and checkpointed, everything is flushed to disk,
-and only then is the player disconnected. That is why a restart or a crash does not clear a cooldown.
+and only then is the player disconnected. That is why a restart or a crash does not
+clear a cooldown.
 
 Because the disconnect resets the counted window, a player readmitted after the cooldown
 starts a fresh `at-minutes` rather than being disconnected again at once. Lifetime
