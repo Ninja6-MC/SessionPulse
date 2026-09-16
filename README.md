@@ -29,9 +29,9 @@ Part of the [Ninja6-MC](https://github.com/Ninja6-MC) plugin suite.
 stable one. Until then, configuration keys and behaviour may still change between
 versions; read the changelog before upgrading.
 
-Alpha builds are published as GitHub pre-releases and as Modrinth alpha versions, and
-never on Hangar. Beta builds are published as GitHub pre-releases, as Modrinth beta
-versions and to Hangar's Beta channel.
+Alpha builds are published as GitHub pre-releases, as Modrinth alpha versions and to
+Hangar's Alpha channel, which Hangar hides by default. Beta builds are published as
+GitHub pre-releases, as Modrinth beta versions and to Hangar's Beta channel.
 
 ---
 
@@ -71,8 +71,8 @@ servers that want structured rest breaks (families, schools, wellness communitie
 
 1. Download the jar from
    [GitHub Releases](https://github.com/Ninja6-MC/SessionPulse/releases). Pre-releases
-   are listed there too, marked *Pre-release*. The same builds are published to Modrinth,
-   and from the first beta to Hangar.
+   are listed there too, marked *Pre-release*. The same builds are published to Modrinth
+   and Hangar.
 2. Drop it into your server's `plugins/` directory and start the server.
 3. `plugins/SessionPulse/config.yml` is generated on that first start, with every setting
    at its default — enforcement off, two health milestones, overtime off.

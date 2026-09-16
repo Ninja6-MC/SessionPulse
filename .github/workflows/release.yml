@@ -152,11 +152,11 @@ jobs:
         uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
 
       # The tag is already validated, so the suffix is one of exactly four shapes and a
-      # `case` on it is total. Hangar differs from SpiralGenesis here: an alpha gets an EMPTY
-      # hangarChannel, which skips the Hangar step, because RELEASE_PROCESS.md's tier table
-      # publishes alphas to GitHub and Modrinth only. SpiralGenesis publishes alphas to a
-      # Hangar Alpha channel; this project has none. rc maps to beta on both registries,
-      # which have no release-candidate tier.
+      # `case` on it is total. Every tier publishes to Hangar, as in SpiralGenesis: an alpha
+      # goes to the Hangar Alpha channel, which is unstable and hidden by default, so the
+      # version is public but listed only under that channel's filter. rc maps to beta on
+      # both registries, which have no release-candidate tier. Hangar selects the channel by
+      # name, so Alpha, Beta and Release must already exist on the Hangar project.
       #
       # make_latest is written out rather than left to softprops' default, which follows
       # GitHub's "latest by date and semver" rule and would move the Latest badge in ways a
@@ -175,7 +175,7 @@ jobs:
 
           case "$VERSION" in
             *-alpha.*)
-              CHANNEL=alpha; HANGAR_CHANNEL=''; PRERELEASE=true ;;
+              CHANNEL=alpha; HANGAR_CHANNEL=Alpha; PRERELEASE=true ;;
             *-beta.*|*-rc.*)
               CHANNEL=beta; HANGAR_CHANNEL=Beta; PRERELEASE=true ;;
             *)
@@ -375,7 +375,8 @@ jobs:
             1.21.11
           java: 21
 
-      # Skipped for alpha tags (empty hangarChannel) as well as without a token.
+      # Skipped without a token. The empty-hangarChannel check is only a defensive guard:
+      # every validated tag maps to a Hangar channel, alphas included.
       #
       # `!cancelled()` replaces the implicit `success()`, which would skip this step whenever
       # any earlier step failed - Modrinth included. The GitHub release outcome is then
