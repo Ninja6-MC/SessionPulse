@@ -15,6 +15,11 @@ Every release follows `MAJOR.MINOR.PATCH[-PRERELEASE]`:
   * `v1.0.0-beta.1` (Public feature-complete testing builds)
   * `v1.0.0-rc.1` (Release candidate)
 
+**Before 1.0.0, every release is a pre-release.** Alphas are for internal testing and
+betas for public testing; `1.0.0` is the first stable release. Do not push an unsuffixed
+tag below `v1.0.0`: `release.yml` publishes every unsuffixed tag as a stable release, as
+*Latest* on GitHub and on the *release* channel of Modrinth and Hangar.
+
 ---
 
 ## 2. Release Tiers & Distribution Channels
@@ -90,8 +95,8 @@ Notes on the table:
 Tag the release on `main`:
 
 ```bash
-git tag -a v0.1.0 -m "v0.1.0"
-git push origin v0.1.0
+git tag -a v0.1.0-alpha.1 -m "v0.1.0-alpha.1"
+git push origin v0.1.0-alpha.1
 ```
 
 Push release tags one at a time, by name. GitHub fires no tag push events at all when more

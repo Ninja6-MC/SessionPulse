@@ -59,6 +59,19 @@ ATTRIBUTE = re.compile(
 )
 
 
+# A reference-style link definition, `[label]: target`, optionally with the target in
+# angle brackets. The transform only rewrites the form CommonMark always treats as a
+# definition - at most three spaces of indentation. The check matches any indentation, so
+# a definition the transform declines to touch (inside a list item, say) is rejected
+# rather than passed through with its relative target intact.
+REFERENCE = re.compile(r"^( {0,3}\[[^\]]+\]:[ \t]*<?)([^\s>]+)")
+REFERENCE_ANYWHERE = re.compile(r"^\s*\[[^\]]+\]:[ \t]*<?([^\s>]+)")
+
+# A definition gives no hint whether a link or an image uses it, so the target's
+# extension decides which base it is rewritten through.
+IMAGE_EXTENSION = re.compile(r"\.(png|jpe?g|gif|svg|webp)([?#]|$)", re.IGNORECASE)
+
+
 class ReadmeError(ValueError):
     """The README cannot be transformed at all, as opposed to producing a bad result.
 
@@ -220,6 +233,27 @@ def check_no_relative_links(text):
     return problems
 
 
+def check_no_relative_reference_definitions(text):
+    """Reject reference-style definitions whose target is still relative.
+
+    `[guide]: docs/ADMIN_GUIDE.md` is as much a link as `[guide](docs/ADMIN_GUIDE.md)`,
+    but the inline link check cannot see it. Fenced blocks are skipped: there the line is
+    code, not a definition.
+    """
+    problems = []
+    fenced = False
+    for number, line in enumerate(text.split("\n"), 1):
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+            continue
+        if fenced:
+            continue
+        match = REFERENCE_ANYWHERE.match(line)
+        if match and not ABSOLUTE.match(match.group(1)):
+            problems.append("%d: relative reference definition: %s" % (number, match.group(1)))
+    return problems
+
+
 def check_no_relative_html_refs(text):
     """Catch relative references the stripper does not know how to remove.
 
@@ -315,6 +349,26 @@ def absolutise_links(text):
     return re.sub(r"\]\(([^)]+)\)", replace, text)
 
 
+def absolutise_reference_definitions(text):
+    """Point relative reference-style definitions at github.com, outside fenced blocks.
+
+    Image files go through RAW and everything else through BLOB, for the same reason
+    absolutise_image_targets runs before absolutise_links.
+    """
+    out = []
+    fenced = False
+    for line in text.split("\n"):
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+        elif not fenced:
+            match = REFERENCE.match(line)
+            if match and not ABSOLUTE.match(match.group(2)):
+                base = RAW if IMAGE_EXTENSION.search(match.group(2)) else BLOB
+                line = match.group(1) + base + line[match.start(2):]
+        out.append(line)
+    return "\n".join(out)
+
+
 def render():
     with io.open(README, encoding="utf-8") as handle:
         lines = handle.read().replace("\r\n", "\n").split("\n")
@@ -325,11 +379,13 @@ def render():
     lines = fold_ascii(lines)
     lines = collapse_blanks(lines)
 
-    text = absolutise_links(absolutise_image_targets("\n".join(lines))) + "\n"
+    text = absolutise_links(absolutise_image_targets("\n".join(lines)))
+    text = absolutise_reference_definitions(text) + "\n"
 
     problems = (
         check_no_stray_hashes(text.split("\n"))
         + check_no_relative_links(text)
+        + check_no_relative_reference_definitions(text)
         + check_no_relative_html_refs(text)
         + check_ascii(text)
         + check_body_is_intact(text)
