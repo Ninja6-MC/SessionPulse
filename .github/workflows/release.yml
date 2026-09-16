@@ -350,6 +350,9 @@ jobs:
           version-type: ${{ steps.vars.outputs.channel }}
           changelog-file: build/release-notes.md
           files: build/libs/${{ steps.vars.outputs.jar }}
+          # EssentialsX is a soft dependency (plugin.yml softdepend), optional and unpinned.
+          dependencies: |
+            essentialsx(optional){modrinth:hXiIvTyT}
           # The four platforms the README claims. The smoke matrix boots Paper, Folia and
           # Spigot; Purpur is a Paper fork and is not booted in CI.
           loaders: |

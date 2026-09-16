@@ -140,7 +140,10 @@ GitHub Actions (`.github/workflows/release.yml`) will:
    `-alpha`, `-beta` and `-rc` tags and as the latest release for a stable tag.
 9. Publish to Modrinth and to Paper Hangar. Once the GitHub release exists the two
    registries are independent: a Modrinth failure fails the run but does not stop the
-   Hangar step.
+   Hangar step. Both uploads declare EssentialsX as an optional, unpinned dependency
+   (`dependencies` on the `mc-publish` step; an external-URL dependency pointing at its
+   Modrinth page in `hangarPublish`, since EssentialsX is not on Hangar). Keep the two
+   in step with `softdepend` in `plugin.yml`.
 10. Sync the Hangar resource page from `docs/store-description.md`, in the Hangar step
     and only after its version upload succeeded. See [Store Descriptions](#store-descriptions).
 
