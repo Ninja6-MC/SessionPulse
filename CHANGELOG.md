@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Releases declare EssentialsX as an optional dependency on Modrinth and Hangar,
+  with no pinned version.
+
 ## [0.1.0]
 
 ### Added

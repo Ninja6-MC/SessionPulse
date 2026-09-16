@@ -179,6 +179,14 @@ hangarPublish {
                         .orElse(releaseGameVersions)
                         .map { versions -> versions.split(",").map(String::trim).filter(String::isNotEmpty) }
                 )
+                // EssentialsX is a soft dependency (plugin.yml softdepend): its AFK state is used
+                // when installed. It is not on Hangar, so it is declared by external URL, with no
+                // version and not required. Bundled libraries (Adventure, FoliaLib) are not listed.
+                dependencies {
+                    url("EssentialsX", "https://modrinth.com/plugin/essentialsx") {
+                        required.set(false)
+                    }
+                }
             }
         }
 
