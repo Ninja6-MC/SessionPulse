@@ -7,25 +7,6 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Added
-- `scripts/store-description.py`, which generates `docs/store-description.md`, the
-  Modrinth and Hangar project description, from `README.md`. It strips the GitHub-only
-  chrome and the download row, absolutises relative links and reference-style link
-  definitions, folds typographic characters to ASCII, and fails on a line-initial `#`
-  inside a code fence, a malformed heading, a relative markdown, reference or HTML
-  target, non-ASCII outside a fence, an unclosed HTML block or an output with no
-  sections. A CI job runs it with `--check`.
-- README sections for requirements, commands, permissions and support.
-- `RELEASE_PROCESS.md` steps for pasting the store description and resubmitting a
-  rejected Modrinth project, and the pre-1.0 policy: every release before `1.0.0` is a
-  pre-release, and no unsuffixed tag is pushed below `v1.0.0`.
-
-### Changed
-- README status and install instructions describe the pre-release channels and
-  downloads instead of a build from source only.
-- The `RELEASE_PROCESS.md` tag example is now `v0.1.0-alpha.1`.
-- The brand assets notes moved from the README to `docs/assets/README.md`.
-
 ## [0.1.0]
 
 ### Added
@@ -164,3 +145,21 @@ adheres to [Semantic Versioning](https://semver.org/).
 - `META-INF/LICENSE` and `META-INF/THIRD_PARTY_NOTICES.md` in the plugin jar, carrying
   the MIT notices of the shaded Adventure, adventure-platform, examination, option and
   FoliaLib components. The build fails unless each is present exactly once.
+- `scripts/store-description.py`, which generates `docs/store-description.md`, the
+  Modrinth and Hangar project description, from `README.md`. It strips the GitHub-only
+  chrome and the download row, absolutises relative links and reference-style link
+  definitions, folds typographic characters to ASCII, and fails on a line-initial `#`
+  inside a code fence, a malformed heading, a relative markdown, reference or HTML
+  target, non-ASCII outside a fence, an HTML block not closed before the next heading
+  or block, or an output with no sections. A CI job runs it with `--check`.
+- README sections for requirements, commands, permissions and support.
+- `RELEASE_PROCESS.md` steps for pasting the store description and resubmitting a
+  rejected Modrinth project, and the pre-1.0 policy: every release before `1.0.0` is a
+  pre-release, and no unsuffixed tag is pushed below `v1.0.0`. Also which changelog
+  section a pre-release takes its notes from.
+
+### Changed
+- README status and install instructions describe the pre-release channels and
+  downloads instead of a build from source only.
+- The `RELEASE_PROCESS.md` tag example is now `v0.1.0-alpha.1`.
+- The brand assets notes moved from the README to `docs/assets/README.md`.

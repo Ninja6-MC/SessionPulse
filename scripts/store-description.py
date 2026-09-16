@@ -125,15 +125,29 @@ def strip_html_blocks(lines):
     """
     out = []
     closing = None
-    for line in lines:
+    opened = None
+    # Numbered against README.md itself, which is why this runs before strip_title.
+    for number, line in enumerate(lines, 1):
+        stripped = line.strip()
         if closing is not None:
             if closing in line:
                 closing = None
+                continue
+            # A closing tag is only trusted if it arrives before anything that cannot be
+            # part of the block. Otherwise an unclosed block would be closed by a later,
+            # unrelated block's tag, and every section in between would be dropped
+            # without a word. A heading or a second block opener means the first block
+            # was never closed.
+            if re.match(r"^#{1,6} ", line) or stripped.startswith("<p ") or stripped.startswith("<p>"):
+                raise ReadmeError(
+                    "README.md line %d opens an HTML block that is not closed with %s "
+                    "before line %d: %s" % (opened, closing, number, stripped)
+                )
             continue
-        stripped = line.strip()
         if stripped.startswith("<p ") or stripped.startswith("<p>"):
             if "</p>" not in stripped:
                 closing = "</p>"
+                opened = number
             continue
         if stripped.startswith("<h1"):
             continue
@@ -144,8 +158,8 @@ def strip_html_blocks(lines):
     # exists to stop a bad page reaching the store, so it must not fail open.
     if closing is not None:
         raise ReadmeError(
-            "README.md has an HTML block that is never closed with %s. "
-            "Stripping it would drop the rest of the file." % closing
+            "README.md line %d opens an HTML block that is never closed with %s. "
+            "Stripping it would drop the rest of the file." % (opened, closing)
         )
 
     return out
@@ -373,8 +387,8 @@ def render():
     with io.open(README, encoding="utf-8") as handle:
         lines = handle.read().replace("\r\n", "\n").split("\n")
 
-    lines = strip_title(lines)
     lines = strip_html_blocks(lines)
+    lines = strip_title(lines)
     lines = strip_store_links(lines)
     lines = fold_ascii(lines)
     lines = collapse_blanks(lines)

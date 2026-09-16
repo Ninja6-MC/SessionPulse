@@ -54,9 +54,8 @@ servers that want structured rest breaks (families, schools, wellness communitie
 
 1. Download the jar from
    [GitHub Releases](https://github.com/Ninja6-MC/SessionPulse/releases). Pre-releases
-   are listed there too, marked *Pre-release*. Builds are also on
-   [Modrinth](https://modrinth.com/plugin/sessionpulse), and from the first beta on
-   [Hangar](https://hangar.papermc.io/Ninja6-MC/SessionPulse).
+   are listed there too, marked *Pre-release*. The same builds are published to Modrinth,
+   and from the first beta to Hangar.
 2. Drop it into your server's `plugins/` directory and start the server.
 3. `plugins/SessionPulse/config.yml` is generated on that first start, with every setting
    at its default - enforcement off, two health milestones, overtime off.

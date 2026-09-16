@@ -86,9 +86,15 @@ Notes on the table:
    ./gradlew test
    ```
 3. Update `CHANGELOG.md`. A stable release needs a `## [X.Y.Z]` section, merged to `main`
-   before tagging. A pre-release may ship from `## [Unreleased]`. Date the `## [X.Y.Z]`
-   heading in that same pull request; the extractor matches the heading with or without
-   a date, so an undated one still releases.
+   before tagging. Date the `## [X.Y.Z]` heading in that same pull request; the extractor
+   matches the heading with or without a date, so an undated one still releases.
+
+   Pre-releases take their notes from the base version's section once it exists. For a
+   `vX.Y.Z-*` tag the extractor tries `## [X.Y.Z-pre.N]`, then `## [X.Y.Z]`, then
+   `## [Unreleased]`, so a `## [X.Y.Z]` section takes precedence over `## [Unreleased]`
+   for every pre-release of that version. Changes aimed at that version go under
+   `## [X.Y.Z]`; `## [Unreleased]` is used only when no section for the base version
+   exists. Below 1.0.0 the section stays undated, because no stable tag is cut for it.
 
 ### Step 2: Cut the Tag
 
@@ -208,4 +214,5 @@ the README or breaks the store content checks. Edit the README, run
   Editing a description does **not** re-enter the review queue: if the project was
   rejected, fix the description and then use *Resubmit for review*, or it stays rejected.
 * **Hangar** is currently also pasted by hand, the same text into the resource page.
-  Syncing it from the release workflow is tracked in #67.
+  Syncing it from the release workflow is tracked in
+  [#67](https://github.com/Ninja6-MC/SessionPulse/issues/67).
