@@ -81,7 +81,9 @@ Notes on the table:
    ./gradlew test
    ```
 3. Update `CHANGELOG.md`. A stable release needs a `## [X.Y.Z]` section, merged to `main`
-   before tagging. A pre-release may ship from `## [Unreleased]`.
+   before tagging. A pre-release may ship from `## [Unreleased]`. The `## [X.Y.Z]`
+   heading is left undated until the release is cut, and is dated in the pre-tag pull
+   request that merges it to `main`.
 
 ### Step 2: Cut the Tag
 
@@ -181,7 +183,7 @@ If a re-run is not possible, publish the failed registry by hand:
   `./gradlew publishPluginPublicationToHangar -PpluginVersion=<version> -PhangarChannel=<Beta|Release> -PhangarProject=<HANGAR_PROJECT or SessionPulse>`.
   The task rebuilds the jar locally, so the bytes uploaded to Hangar will not match the
   `.sha256` on the GitHub release. Without `build/release-notes.md` the Hangar changelog
-  falls back to "See CHANGELOG.md for this version."
+  falls back to "No changelog section was written for this pre-release."
 
 The Minecraft versions declared to both registries are one explicit list, kept in
 `build.gradle.kts` (`releaseGameVersions`) and in `release.yml` (`game-versions`): 1.20.4

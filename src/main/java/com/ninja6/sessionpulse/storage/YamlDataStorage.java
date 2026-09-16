@@ -95,7 +95,7 @@ import java.util.logging.Logger;
  * <h2>Accepted limitations</h2>
  *
  * <ul>
- *   <li>A system clock moved backwards shortens a cooldown already on record.</li>
+ *   <li>A system clock moved backwards lengthens a cooldown already on record.</li>
  *   <li>A hard crash loses at most one flush interval of counted time, and leaves
  *       {@code last-seen} at most that stale.</li>
  *   <li>The cooldown flush is asynchronous, so a crash in the moment before it runs can
