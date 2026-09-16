@@ -293,7 +293,7 @@ a colour or a click event into your message.
 | Placeholder | Value |
 | --- | --- |
 | `<player>` | The player's name. |
-| `<hours>` | Counted hours to one decimal place, truncated (not rounded). |
+| `<hours>` | Counted hours to one decimal place, truncated (not rounded). A window under 6 minutes renders `0.0`. |
 | `<minutes>` | Counted whole minutes, truncated. |
 | `<cooldown>` | Minutes before the player may rejoin, rounded up. |
 | `<rank>` | Position in `/spulse top`. Command replies only. |
@@ -308,6 +308,10 @@ Which message gets which:
 | `reminders.overtime.message` | `<player>`, `<hours>`, `<minutes>` |
 | `enforcement.kick-message`, on the disconnect screen | `<player>`, `<hours>`, `<minutes>` (the counted window that was reached), `<cooldown>` (the full cooldown) |
 | `enforcement.kick-message`, on the login refusal screen | `<player>`, `<hours>` and `<minutes>` (both `at-minutes`, because the disconnect reset the window), `<cooldown>` (the time remaining) |
+
+Prefer `<minutes>` in any message that can fire below about half an hour. `<hours>` is
+truncated, so a 20-minute milestone reads `0.3` and anything under 6 minutes reads `0.0`,
+which looks like a bug to the player rather than a short window.
 
 A placeholder that the message does not support is not an error: MiniMessage renders
 the unknown tag as the literal text you typed. That is the mechanism behind the prefix

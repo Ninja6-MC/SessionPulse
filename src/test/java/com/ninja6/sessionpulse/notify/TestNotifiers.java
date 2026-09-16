@@ -51,7 +51,7 @@ public final class TestNotifiers {
         }
 
         @Override
-        public void playSound(Sound sound, Sound.Emitter emitter) {
+        public void playSound(Sound sound) {
             calls.add("sound:" + sound.name().asString());
         }
     }

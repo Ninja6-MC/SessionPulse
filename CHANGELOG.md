@@ -62,6 +62,8 @@ adheres to [Semantic Versioning](https://semver.org/).
   section-sign render for the String-only kick and pre-login screens that keeps hex
   colours. `notify/Placeholders` fills `<player>`, `<hours>`, `<minutes>` and
   `<cooldown>` as text, never as markup, so a player name cannot inject a click event.
+  Sounds are played with no emitter, at the listener's own position: the platform facets
+  that carry one are skipped on Minecraft 26.x, where an emitter-taking call is dropped.
 - Configured milestones fire once per counted window, through `Notifier` on the player's
   own region. A reload, a rejoin or a restart in the same window does not fire them again,
   and a player holding `sessionpulse.exempt` never receives one.

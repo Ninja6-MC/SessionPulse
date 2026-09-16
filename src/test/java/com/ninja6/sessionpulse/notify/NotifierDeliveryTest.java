@@ -1,7 +1,7 @@
 package com.ninja6.sessionpulse.notify;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.fail;
 
 import com.ninja6.sessionpulse.config.Milestone;
 import java.util.ArrayList;
@@ -45,9 +45,14 @@ class NotifierDeliveryTest {
         }
 
         @Override
-        public void playSound(Sound sound, Sound.Emitter emitter) {
-            assertSame(Sound.Emitter.self(), emitter, "a sound not played at the player");
+        public void playSound(Sound sound) {
             calls.add("sound:" + sound.name().asString());
+        }
+
+        /** Never called: {@link Notifier} plays every sound with no emitter. See #64. */
+        @Override
+        public void playSound(Sound sound, Sound.Emitter emitter) {
+            fail("a sound played with an emitter, which no 26.x facet backs");
         }
     }
 
@@ -70,8 +75,17 @@ class NotifierDeliveryTest {
 
         notifier.title(null, "<red>t</red>", "<red>s</red>", none);
         assertEquals(List.of("title:§ct/§cs"), audience.calls);
-        audience.calls.clear();
+    }
 
+    /**
+     * Issue #64: the emitter-taking overload reaches no facet on 26.x, so a sound sent with
+     * one is silently dropped. The assertion below only proves a sound arrives; what pins the
+     * overload is {@link RecordingAudience#playSound(Sound, Sound.Emitter)}, which fails the
+     * run if anything in {@link Notifier} goes back to passing an emitter.
+     */
+    @Test
+    @DisplayName("a sound is played with no emitter, because 26.x backs no other overload")
+    void aSoundIsPlayedWithNoEmitter() {
         notifier.sound(null, org.bukkit.Sound.BLOCK_NOTE_BLOCK_CHIME);
         assertEquals(List.of("sound:minecraft:block.note_block.chime"), audience.calls);
     }
