@@ -108,8 +108,9 @@ public final class SessionPulseProbeBot {
                 } else if (packet instanceof ClientboundSoundPacket sound) {
                     report("sound key=" + key(sound.getSound()));
                 } else if (packet instanceof ClientboundSoundEntityPacket sound) {
-                    // Adventure's playSound(Sound, Emitter.self()) takes this route rather than
-                    // the positional packet, so both count.
+                    // Adventure's emitter-less playSound(Sound) now takes the positional
+                    // branch above; this entity route stays tolerated in case a facet or a
+                    // server version sends it instead. Both print the identical line.
                     report("sound key=" + key(sound.getSound()));
                 } else if (packet instanceof ClientboundLoginDisconnectPacket d) {
                     // Login phase: AsyncPlayerPreLoginEvent#disallow, the cooldown refusal.
