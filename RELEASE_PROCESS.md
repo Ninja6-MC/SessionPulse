@@ -34,7 +34,7 @@ there is no separate release branch.
                     [ feat/… fix/… docs/… topic branches ]
                                       │
                                       ▼
-                            [ PR squashed into main ]
+                   [ PR squashed via Tier-2 Merge Queue ]
                                       │
                 ┌─────────────────────┴─────────────────────┐
                 ▼                                           ▼
@@ -83,7 +83,7 @@ Notes on the table:
 ## 3. How to Execute a Release
 
 ### Step 1: Pre-Release Checklist
-1. All target PRs merged into `main`, and **CI green on the commit you are about to tag**.
+1. All target PRs merged into `main` via the Tier-2 Merge Queue, and **CI green on the commit you are about to tag**.
    This is the gate. The release job runs `test` and `shadowJar`, not `build`, so the
    sources and javadoc jars, and everything else `build` checks, are proven only by CI.
 2. Run test suite locally:
