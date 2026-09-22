@@ -105,6 +105,9 @@ git push -u origin feat/my-actual-change && git push origin --delete <old-name>
    and the branch up to date before it can merge.
 5. PRs are squash-merged, so the PR title becomes the commit on `main` — write it as a
    Conventional Commit.
+6. Add a `CHANGELOG.md` entry only for what a server owner sees: behaviour, configuration,
+   commands, permissions, messages and compatibility. CI, build, tooling, release-process
+   and repository-docs changes are recorded in the commit history, not the changelog.
 
 ---
 
