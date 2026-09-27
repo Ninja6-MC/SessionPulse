@@ -16,13 +16,15 @@ class SnapshotVersionTest(unittest.TestCase):
         self.git("init", "-q")
         self.git("config", "user.name", "Snapshot Test")
         self.git("config", "user.email", "snapshot@example.invalid")
+        self.commit_number = 0
         self.commit()
 
     def git(self, *args):
         return subprocess.check_output(("git", *args), cwd=self.repo, text=True).strip()
 
     def commit(self):
-        self.git("commit", "-q", "--allow-empty", "-m", "test")
+        self.commit_number += 1
+        self.git("commit", "-q", "--allow-empty", "-m", f"test-{self.commit_number}")
 
     def version(self):
         return subprocess.check_output((sys.executable, str(SCRIPT)), cwd=self.repo, text=True).strip()
