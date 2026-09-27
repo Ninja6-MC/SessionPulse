@@ -34,6 +34,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       # `gradle/wrapper/gradle-wrapper.jar` is an executable committed to the repository
       # and run by every job that calls ./gradlew, and no reviewer can read a diff of it.
@@ -88,34 +89,43 @@ jobs:
       - name: Ensure Gradle Wrapper Is Executable
         run: chmod +x ./gradlew
 
-      # There are no test sources yet, so this reports NO-SOURCE and passes trivially.
-      # It is a separate step from the build anyway, so that once tests exist a red run
-      # says "tests" rather than "gradle".
+      - name: Test Snapshot Version and Artifact Checks
+        run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+
+      # The checkout is the commit CI actually builds, including a synthetic PR merge
+      # commit. Fetching all history above makes its reachable release tags available.
+      - name: Determine Snapshot Version
+        id: version
+        run: |
+          VERSION="$(python3 scripts/snapshot-version.py)"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Snapshot version: $VERSION"
+
       - name: Run Tests
-        run: ./gradlew test --no-daemon
+        env:
+          PLUGIN_VERSION: ${{ steps.version.outputs.version }}
+        run: ./gradlew test -PpluginVersion="$PLUGIN_VERSION" --no-daemon
 
       # `build`, not `shadowJar`: it runs check plus the full assemble, so the sources
       # and javadoc jars the release pipeline will publish are compiled here rather than
       # first failing at tag time. `build` already dependsOn(shadowJar) in build.gradle.kts.
       - name: Build
-        run: ./gradlew build --no-daemon
+        env:
+          PLUGIN_VERSION: ${{ steps.version.outputs.version }}
+        run: ./gradlew build -PpluginVersion="$PLUGIN_VERSION" --no-daemon
 
-      # build/libs holds four jars: the shaded SessionPulse-<version>.jar, and the
-      # -thin, -sources and -javadoc siblings. Only the shaded one is the plugin. The
-      # exclusions are load-bearing: `jar` carries the `thin` classifier precisely so the
-      # thin jar cannot occupy the plugin's path, and an unqualified *.jar glob would put
-      # all four in one directory for a smoke job or a human to pick the wrong one out of.
-      # The list is a denylist, so any new archive task added to the build has to extend
-      # these exclusions or its jar joins the artifact silently.
+      # Check the exact deployable set and the version inside the shaded JAR before upload.
+      # build/libs also contains thin, sources, and javadoc jars, which are not plugins.
+      - name: Verify Snapshot Artifact
+        env:
+          PLUGIN_VERSION: ${{ steps.version.outputs.version }}
+        run: python3 scripts/verify-snapshot-artifact.py "$PLUGIN_VERSION"
+
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: SessionPulse-SNAPSHOT
-          path: |
-            build/libs/*.jar
-            !build/libs/*-thin.jar
-            !build/libs/*-sources.jar
-            !build/libs/*-javadoc.jar
+          path: build/libs/SessionPulse-${{ steps.version.outputs.version }}.jar
           if-no-files-found: error
           retention-days: 7
 

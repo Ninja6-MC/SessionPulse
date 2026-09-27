@@ -3,6 +3,9 @@
 build/
 !gradle/wrapper/gradle-wrapper.jar
 
+# Python tests
+__pycache__/
+
 # Run-paper & Local Test Server
 run/
 # Smoke-test working directories (run-paper/, run-folia/).
