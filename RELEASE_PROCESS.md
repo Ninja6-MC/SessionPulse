@@ -131,52 +131,59 @@ GitHub Actions (`.github/workflows/release.yml`) will:
    file. The same notes go to GitHub, Modrinth and Hangar; the GitHub release adds a
    "Requires Java 21." line after them.
 5. Compile with Java 21 and run the JUnit 6 tests.
-6. Build the shaded, relocated `SessionPulse-<version>.jar` (FoliaLib and Adventure
+6. Build the shaded, relocated `SessionPulse-<version>.jar` once (FoliaLib and Adventure
    relocated under `com.ninja6.sessionpulse.lib`, with `META-INF/LICENSE` and
-   `META-INF/THIRD_PARTY_NOTICES.md`), and check it is the only jar in `build/libs`.
+   `META-INF/THIRD_PARTY_NOTICES.md`).
 7. Compute its SHA-256 checksum (`SessionPulse-<version>.jar.sha256`, holding a bare
    filename so `sha256sum -c` works beside the downloaded jar).
-8. Publish the jar, the checksum and the notes to GitHub Releases, as a pre-release for
-   `-alpha`, `-beta` and `-rc` tags and as the latest release for a stable tag.
-9. Publish to Modrinth and to Paper Hangar. Once the GitHub release exists the two
-   registries are independent: a Modrinth failure fails the run but does not stop the
-   Hangar step. Both uploads declare EssentialsX as an optional, unpinned dependency
+8. Seal the jar, checksum and notes with a manifest recording the source SHA, tag,
+   version, channel, run ID and attempt, candidate ID, destination list, file inventory
+   and SHA-256 digests. Retain them as one Actions artifact for 30 days.
+9. Download the candidate in three independent smoke jobs. Each checks the manifest,
+   inventory, digests, embedded `plugin.yml` version, relocation, notices and service
+   entries before running the existing Paper, Folia or Spigot 1.21.11 protocol smoke
+   path on that exact jar. A fourth job binds three passing receipts to the candidate
+   ID and digest and retains the evidence for 30 days.
+10. Wait for approval on the protected `release` environment. The publisher downloads
+    and checks the retained candidate and evidence, and resolves the tag on `origin`
+    before every destination. A moved tag, expired artifact, failed test record or
+    changed byte stops publication.
+11. Publish the unchanged jar to GitHub Releases, Modrinth and Paper Hangar in that
+    order. Pre-releases retain their tier; only stable tags become GitHub Latest. Both
+    registries declare EssentialsX as an optional, unpinned dependency
    (`dependencies` on the `mc-publish` step; an external-URL dependency pointing at its
    Modrinth page in `hangarPublish`, since EssentialsX is not on Hangar). Keep the two
    in step with `softdepend` in `plugin.yml`.
-10. Sync the Hangar resource page from `docs/store-description.md`, in the Hangar step
+12. Sync the Hangar resource page from `docs/store-description.md`, in the Hangar step
     and only after its version upload succeeded. See [Store Descriptions](#store-descriptions).
 
 **Requires Java 21.** The plugin is built for Java 21 and declares it on Modrinth; every
 server must run on Java 21 or newer to load it, including 1.20.4-1.20.6, which
 Minecraft itself allows on Java 17.
 
-### First Run
+### Release Environment and Secrets
 
-The first pre-release tag pushed to this repository is the rehearsal for the pipeline.
-Issue #32 stays open until that run produces a complete GitHub pre-release (jar, checksum
-and notes) with both registry steps skipped, because no registry token is configured yet.
-Add the registry tokens after that run, not before.
+The `release` environment requires maintainer approval, accepts `v*` tags only and
+disallows administrator bypass. Build, smoke and evidence jobs have read permission and
+receive no publishing credentials. Only the gated publisher has `contents: write` and
+registry secrets. Never approve a deployment from automation.
 
-### Repository Secrets
-
-| Secret | Used by | Permissions | Publishing is skipped if absent |
-| :--- | :--- | :--- | :--- |
-| `MODRINTH_TOKEN` | Modrinth step (`mc-publish`) | | Yes |
-| `HANGAR_API_TOKEN` | Hangar step (`publishPluginPublicationToHangar`, then `syncPluginPublicationMainResourcePagePageToHangar`) | `create_version` and `edit_page` | Yes |
+| Environment secret | Used by | Required scope |
+| :--- | :--- | :--- |
+| `MODRINTH_TOKEN` | Modrinth lookup and upload | Read projects and versions; create versions on the SessionPulse project |
+| `HANGAR_API_TOKEN` | Hangar lookup, version upload and page sync | Project member's key with `view_public_info`, `create_version`, `edit_page` |
 
 A Hangar API key holding only `create_version` still uploads the version, but Hangar
 rejects the page sync that follows. That fails the job whenever the page text changed;
 when it did not, the only sign is an `Error using endpoint` line in the step log. Replace
 the key with one holding both permissions before the first release that runs the sync.
 
-Neither is required for a release to succeed. Without them the workflow still tests,
-builds and publishes to GitHub Releases, and simply skips the registry it has no token
-for. The workflow uses no deployment environment.
-
-Each token reaches only the step that uploads with it. An early step records whether each
-secret is set, without printing it, and the publish steps are gated on that; the tests and
-the Gradle build never see either token.
+Both tokens are required. Issue #79 tracks their migration: create new tokens, add them
+as `release` environment secrets, delete the repository secrets, and revoke the old
+tokens. Set the **environment variable** `RELEASE_SECRETS_MIGRATED=true` only after
+those checks. The publisher fails before any destination write while it is unset. A
+repository secret with the same name can otherwise be resolved by a job using the
+environment, so the migration cannot be certified by workflow syntax alone.
 
 ### Repository Variables
 
@@ -187,38 +194,28 @@ the Gradle build never see either token.
 
 Set them only if a registry project is created under a different slug.
 
-### When a Registry Step Fails
+### Partial Publication and Retry
 
-Publishing is **not atomic**. The GitHub release is created first; after it, the Modrinth
-and Hangar steps are independent of each other, and whatever succeeded stays published.
+The destination order is GitHub, Modrinth, Hangar, then Hangar page sync. Publication is
+not atomic. Use **Re-run failed jobs** on the original run while its candidate and test
+evidence still exist; the publisher uses the original candidate attempt and needs a new
+environment approval. Do not re-run all jobs to manufacture a replacement candidate.
+The publisher checks GitHub's downloaded assets and release metadata, Modrinth's CDN
+download and channel, and Hangar's file digest, CDN download and channel. Matching
+destinations are skipped; missing destinations receive the retained jar. Each upload
+is checked against the public consumer download before the next destination proceeds.
+Conflicting or uncertain bytes stop the retry for maintainer reconciliation rather
+than overwriting a version. Inspect the published files against `manifest.json`, then
+decide how to recover the remaining work.
 
-**If only the Hangar page sync failed**, the version is already published: go straight to
-the manual sync command under *Hangar resource page* below. A re-run fails at the
-duplicate Hangar upload and never reaches the sync, and it would also replace the jar and
-`.sha256` on the GitHub release.
+Registry lookups use the environment tokens so hidden or draft versions are included.
+Retain the read permissions above when rotating tokens; authentication or lookup
+failure stops publication.
 
-Otherwise, **prefer "Re-run failed jobs"** on the failed workflow run. The job runs again from the
-start on a fresh runner: it re-tests and rebuilds the jar there, replaces the jar and
-`.sha256` on the GitHub release with the rebuilt pair, and tries both registries again.
-The registry that succeeded the first time rejects the duplicate version and that step
-fails, so the re-run ends red even when it did its job; read the step results, not the
-run's colour.
-
-If a re-run is not possible, publish the failed registry by hand:
-
-* **Modrinth:** download the jar from the GitHub release and upload it as a new version
-  with the same version number, channel, loaders, game versions and changelog as the
-  workflow uses. This keeps the bytes matching the release's `.sha256`.
-* **Hangar:** from a checkout of the tagged commit, with `HANGAR_API_TOKEN` set and the
-  release notes saved as `build/release-notes.md`, run
-  `./gradlew publishPluginPublicationToHangar -PpluginVersion=<version> -PhangarChannel=<Alpha|Beta|Release> -PhangarProject=<HANGAR_PROJECT or SessionPulse>`.
-  The task rebuilds the jar locally, so the bytes uploaded to Hangar will not match the
-  `.sha256` on the GitHub release. Without `build/release-notes.md` the Hangar changelog
-  falls back to "No changelog section was written for this pre-release."
-* **Hangar resource page:** a failed page sync leaves the version published; a re-run
-  would stop at the rejected duplicate upload before reaching the sync. From a checkout
-  of the tagged commit, with `HANGAR_API_TOKEN` set, run
-  `./gradlew syncPluginPublicationMainResourcePagePageToHangar -PhangarProject=<HANGAR_PROJECT or SessionPulse>`.
+A failed page sync after a successful Hangar upload can be retried: the matching
+version is verified and skipped, then the page sync runs again. Missing or expired
+retention artifacts, an incomplete test record, or a moved tag require manual
+reconciliation. Never rebuild a jar for the same release tag.
 
 The Minecraft versions declared to both registries are one explicit list, kept in
 `build.gradle.kts` (`releaseGameVersions`) and in `release.yml` (`game-versions`): 1.20.4

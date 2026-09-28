@@ -173,7 +173,9 @@ hangarPublish {
 
         platforms {
             paper {
-                jar.set(tasks.shadowJar.flatMap { it.archiveFile })
+                // Publication consumes the retained candidate downloaded by the workflow.
+                // A task output provider here would schedule shadowJar during promotion.
+                jar.set(layout.file(providers.gradleProperty("releaseJar").map { file(it) }))
                 platformVersions.set(
                     providers.gradleProperty("hangarPlatformVersions")
                         .orElse(releaseGameVersions)
