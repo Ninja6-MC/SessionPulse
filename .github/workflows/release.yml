@@ -1,222 +1,73 @@
 name: Publish Release
 
-# Ported from SpiralGenesis's release.yml, with the differences called out where they occur.
-#
-# One pattern, not SpiralGenesis's two. A glob's `*` matches any run of characters that is
-# not `/`, dots and hyphens included, so `v*.*.*` already matches v1.0.0-beta.1 and a
-# separate `v*.*.*-*` entry adds nothing. It also matches plenty that is not a release tag
-# (v1.0.0-whatever, v1.2.3.4), which is why the first step validates the tag exactly.
-#
-# GitHub fires NO tag push events at all when more than three tags are pushed at once - not
-# three of them, none. `git push --tags` after tagging several releases locally therefore
-# publishes nothing and reports nothing. Push release tags one at a time, by name.
 on:
   push:
-    tags:
-      - 'v*.*.*'
+    tags: ['v*.*.*']
 
-# A re-pushed tag must not cancel a run that may already be halfway through publishing to a
-# registry: an interrupted publish leaves a GitHub release without its Modrinth version, or
-# the reverse. So a second run for the same tag queues behind the first instead.
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
-# Top-level default. The `publish` job below overrides this with `contents: write`, which it
-# needs to create the GitHub release - a job's permissions REPLACE the workflow's on a normal
-# run, they are not capped by it. So this line costs the publisher nothing and scopes
-# anything added later to reads.
 permissions:
   contents: read
 
 jobs:
-  publish:
-    name: Build and Publish Release
+  candidate:
+    name: Build Release Candidate
     runs-on: ubuntu-latest
-    # A cold build and test is about a minute; the rest is two registry uploads. A hung
-    # upload would otherwise burn the 360-minute default.
     timeout-minutes: 30
-
-    # No `environment:` key, unlike SpiralGenesis. Naming an environment that does not exist
-    # makes GitHub create it silently with no protection rules, which looks like a review
-    # gate and is not one. The pause before publishing is the tag itself, cut by hand on a
-    # commit already green on main (RELEASE_PROCESS.md). Adding a real environment with a
-    # required reviewer is a repository-settings change and belongs in its own issue.
-    permissions:
-      contents: write
-
-    # No job-level env carrying the registry tokens, unlike SpiralGenesis. Job-level env is
-    # exported into EVERY step - the Gradle build and tests included, which execute code
-    # and third-party plugins from this repository's dependency graph - so a token placed
-    # there is readable by far more than the one step that uploads with it. The `tokens`
-    # step below records only whether each secret is set, and each secret is then passed to
-    # its own publish step and nowhere else.
-
+    outputs:
+      attempt: ${{ steps.vars.outputs.attempt }}
+      sha: ${{ steps.vars.outputs.sha }}
+      version: ${{ steps.vars.outputs.version }}
+      channel: ${{ steps.vars.outputs.channel }}
+      hangar_channel: ${{ steps.vars.outputs.hangar_channel }}
+      prerelease: ${{ steps.vars.outputs.prerelease }}
     steps:
-      # First, so a malformed tag fails in seconds rather than after a toolchain setup. The
-      # trigger glob accepts any suffix, so `v1.0.0-whatever` reaches this job and would fall
-      # through the channel mapping below into a stable release. The tier a tag publishes to
-      # is decided by the tag, so the tag has to be exact. GITHUB_REF_NAME is the runner's
-      # own variable, not an expression, so nothing from the tag is templated into the script.
-      - name: Validate Tag Format
-        run: |
-          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?$ ]]; then
-            echo "::error::Tag '$GITHUB_REF_NAME' is not a valid release tag."
-            echo
-            echo "Expected vMAJOR.MINOR.PATCH, optionally followed by"
-            echo "-alpha.N, -beta.N or -rc.N. For example:"
-            echo "  v1.0.0"
-            echo "  v1.0.0-beta.1"
-            echo
-            echo "Delete the tag, then re-tag with the correct format:"
-            echo "  git tag -d $GITHUB_REF_NAME && git push origin :refs/tags/$GITHUB_REF_NAME"
-            exit 1
-          fi
-          echo "Tag '$GITHUB_REF_NAME' is valid."
-
-      # Which registries this run can publish to. Secrets cannot be read in an `if`, so this
-      # step maps them into its OWN env - visible to this script only - and writes back a
-      # plain true/false per registry. The values are tested for emptiness and never printed
-      # or written anywhere. Both tokens are optional: absent, the matching publish step is
-      # skipped and the GitHub release still happens.
-      - name: Detect Registry Tokens
-        id: tokens
-        env:
-          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
-          HANGAR_API_TOKEN: ${{ secrets.HANGAR_API_TOKEN }}
-        run: |
-          if [ -n "$MODRINTH_TOKEN" ]; then MODRINTH=true; else MODRINTH=false; fi
-          if [ -n "$HANGAR_API_TOKEN" ]; then HANGAR=true; else HANGAR=false; fi
-          {
-            echo "modrinth=$MODRINTH"
-            echo "hangar=$HANGAR"
-          } >> "$GITHUB_OUTPUT"
-          echo "Modrinth token configured: $MODRINTH; Hangar token configured: $HANGAR"
-
-      # Full history, because the next step needs main's history to compare against.
-      - name: Checkout Code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
-
-      # RELEASE_PROCESS.md says tags are cut on main, and this is what makes that a rule
-      # rather than a habit. A tag pushed on a topic branch would otherwise publish code that
-      # never passed review or main's required checks. The tagged commit must be main's head
-      # or an ancestor of it; a tag on an older main commit is allowed, which is what a
-      # re-tag after a failed run needs.
-      #
-      # fetch-depth 0 normally brings origin/main with it. The explicit fetch is the fallback
-      # for a checkout that did not, and it runs unauthenticated because credentials are not
-      # persisted - fine for a public repository.
-      - name: Require Tagged Commit On Main
-        run: |
-          if ! git rev-parse --verify --quiet origin/main >/dev/null; then
-            git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
-          fi
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "::error::$GITHUB_REF_NAME points at $GITHUB_SHA, which is not on main."
-            echo "Release tags are cut on main. Merge the change, then tag a commit on main."
-            exit 1
-          fi
-          echo "$GITHUB_SHA is on main."
-
-      # `gradle/wrapper/gradle-wrapper.jar` is an executable committed to the repository and
-      # run by every job that calls ./gradlew, and no reviewer can read a diff of it. This
-      # checksums it against Gradle's published releases. Before anything that could execute
-      # it, and with the same retry as ci.yml: the check reaches services.gradle.org with no
-      # retry of its own, and a transient failure here would fail a tagged release. See the
-      # fuller note in ci.yml.
-      - name: Validate Gradle Wrapper
-        id: wrapper
-        continue-on-error: true
-        uses: gradle/actions/wrapper-validation@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
-
-      # ENETUNREACH returns instantly, so retrying straight away would prove nothing.
-      - name: Wait Before Revalidating
-        if: steps.wrapper.outcome == 'failure'
-        run: sleep 15
-
-      # Only reached when the first attempt failed. A wrapper that fails twice fails the job.
-      - name: Validate Gradle Wrapper (retry)
-        if: steps.wrapper.outcome == 'failure'
-        uses: gradle/actions/wrapper-validation@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
-
-      - name: Set up Java 21
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
-
-      # The tag is already validated, so the suffix is one of exactly four shapes and a
-      # `case` on it is total. Every tier publishes to Hangar, as in SpiralGenesis: an alpha
-      # goes to the Hangar Alpha channel, which is unstable and hidden by default, so the
-      # version is public but listed only under that channel's filter. rc maps to beta on
-      # both registries, which have no release-candidate tier. Hangar selects the channel by
-      # name, so Alpha, Beta and Release must already exist on the Hangar project.
-      #
-      # make_latest is written out rather than left to softprops' default, which follows
-      # GitHub's "latest by date and semver" rule and would move the Latest badge in ways a
-      # reader of this file cannot predict. Only a stable tag may take it.
-      - name: Extract Tag & Release Channel
+      - name: Validate tag and source
         id: vars
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          {
-            echo "tag=$GITHUB_REF_NAME"
-            echo "version=$VERSION"
-            # Everything before the first hyphen: 1.0.0-beta.1 -> 1.0.0.
-            echo "baseVersion=${VERSION%%-*}"
-            echo "jar=SessionPulse-$VERSION.jar"
-          } >> "$GITHUB_OUTPUT"
-
+          set -euo pipefail
+          TAG="$GITHUB_REF_NAME"
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?$ ]]; then
+            echo "::error::Invalid release tag $TAG"
+            exit 1
+          fi
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          SHA="$(git rev-parse HEAD)"
+          test "$SHA" = "$(git rev-parse "$TAG^{commit}")"
+          git merge-base --is-ancestor "$SHA" origin/main
+          VERSION="${TAG#v}"
           case "$VERSION" in
-            *-alpha.*)
-              CHANNEL=alpha; HANGAR_CHANNEL=Alpha; PRERELEASE=true ;;
-            *-beta.*|*-rc.*)
-              CHANNEL=beta; HANGAR_CHANNEL=Beta; PRERELEASE=true ;;
-            *)
-              CHANNEL=release; HANGAR_CHANNEL=Release; PRERELEASE=false ;;
+            *-alpha.*) CHANNEL=alpha; HANGAR=Alpha; PRE=true ;;
+            *-beta.*|*-rc.*) CHANNEL=beta; HANGAR=Beta; PRE=true ;;
+            *) CHANNEL=release; HANGAR=Release; PRE=false ;;
           esac
           {
+            echo "sha=$SHA"
+            echo "attempt=$GITHUB_RUN_ATTEMPT"
+            echo "version=$VERSION"
             echo "channel=$CHANNEL"
-            echo "hangarChannel=$HANGAR_CHANNEL"
-            echo "prerelease=$PRERELEASE"
-            # softprops reads make_latest as the string 'true' or 'false'.
-            if [ "$PRERELEASE" = true ]; then echo "makeLatest=false"; else echo "makeLatest=true"; fi
+            echo "hangar_channel=$HANGAR"
+            echo "prerelease=$PRE"
           } >> "$GITHUB_OUTPUT"
-          echo "channel=$CHANNEL hangarChannel='${HANGAR_CHANNEL}' prerelease=$PRERELEASE"
-
-      # Before the build, so a stable tag with no changelog section fails in seconds.
-      #
-      # One rule, used for all three destinations - the GitHub release body, the Modrinth
-      # changelog and the Hangar changelog:
-      #   stable       ## [X.Y.Z] is REQUIRED; without it the run fails.
-      #   pre-release  ## [X.Y.Z-pre.N], else ## [X.Y.Z], else ## [Unreleased], else a fixed
-      #                sentence saying no section was written.
-      # A pre-release takes its own section first, then its base version's section, which
-      # holds the work aimed at that version, and falls back to [Unreleased] only when
-      # neither exists, then to the fixed sentence. The notes never say "see the
-      # GitHub release": on GitHub that points at itself, and on a registry it points at a
-      # page carrying the same text.
-      #
-      # A section ends at the next `## ` heading or at the first Keep-a-Changelog link
-      # reference (`[0.1.0]: https://...`), which sits after the last section and would
-      # otherwise be swept into the oldest version's notes. A heading counts when the line
-      # STARTS with `## [<version>]`, so `## [0.1.0] - 2026-10-01` matches 0.1.0 and
-      # `## [0.1.0-rc.1]` does not. A section of only whitespace counts as absent.
-      #
-      # release-notes.md feeds both registries; release-body.md is the same text plus the
-      # Java requirement, for the GitHub release, where readers download the jar directly.
-      - name: Check Changelog And Collect Release Notes
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          java-version: '21'
+          distribution: temurin
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - name: Collect release notes
         env:
           VERSION: ${{ steps.vars.outputs.version }}
-          BASE_VERSION: ${{ steps.vars.outputs.baseVersion }}
           PRERELEASE: ${{ steps.vars.outputs.prerelease }}
         run: |
+          set -euo pipefail
           extract() {
             awk -v header="## [$1]" '
               index($0, header) == 1 { found = 1; next }
@@ -226,135 +77,242 @@ jobs:
             ' CHANGELOG.md
           }
           blank() { [ -z "${1//[[:space:]]/}" ]; }
-
-          if [ "$PRERELEASE" != "true" ]; then
-            NOTES="$(extract "$VERSION")"
-            if blank "$NOTES"; then
-              echo "::error::CHANGELOG.md has no '## [$VERSION]' section."
-              echo
-              echo "A stable release must document what changed. Move the [Unreleased]"
-              echo "entries under a '## [$VERSION]' heading, merge that to main, and re-tag."
-              exit 1
-            fi
-          else
-            NOTES="$(extract "$VERSION")"
-            blank "$NOTES" && NOTES="$(extract "$BASE_VERSION")"
-            blank "$NOTES" && NOTES="$(extract "Unreleased")"
+          NOTES="$(extract "$VERSION")"
+          if [ "$PRERELEASE" = true ]; then
+            blank "$NOTES" && NOTES="$(extract "${VERSION%%-*}")"
+            blank "$NOTES" && NOTES="$(extract Unreleased)"
             blank "$NOTES" && NOTES="No changelog section was written for this pre-release."
-          fi
-
-          mkdir -p build
-          printf '%s\n' "$NOTES" > build/release-notes.md
-          printf '%s\n\n%s\n' "$NOTES" "Requires Java 21." > build/release-body.md
-          echo "Release notes:"
-          cat build/release-notes.md
-
-      # Defensive, as in ci.yml: `gradlew` carries mode 100755 in the index today.
-      - name: Ensure Gradle Wrapper Is Executable
-        run: chmod +x ./gradlew
-
-      # Never publish an artifact whose tests have not passed. `test` and `shadowJar`, not
-      # `build`: the sources and javadoc jars are not published, and CI has already run
-      # `build` on this commit - which is why RELEASE_PROCESS.md makes "CI green on the
-      # tagged commit" the gate for cutting the tag.
-      - name: Run Tests
-        run: ./gradlew test --no-daemon
-
-      # shadowJar's doLast proves the relocation and the licence notices on this very jar.
-      - name: Build Release JAR
-        env:
-          VERSION: ${{ steps.vars.outputs.version }}
-        run: ./gradlew shadowJar -PpluginVersion="$VERSION" --no-daemon
-
-      # Every upload below names the jar exactly, so prove it is the only one there. A
-      # future task that also writes into build/libs would otherwise sit beside the plugin
-      # unnoticed, and a version mismatch between the tag and the jar would upload nothing.
-      - name: Verify Release JAR
-        env:
-          JAR: ${{ steps.vars.outputs.jar }}
-        run: |
-          shopt -s nullglob
-          JARS=(build/libs/*.jar)
-          if [ "${#JARS[@]}" -ne 1 ] || [ "${JARS[0]}" != "build/libs/$JAR" ]; then
-            echo "::error::Expected exactly build/libs/$JAR, found: ${JARS[*]:-nothing}"
+          elif blank "$NOTES"; then
+            echo "::error::CHANGELOG.md has no section for $VERSION"
             exit 1
           fi
-          echo "Release jar: build/libs/$JAR"
-
-      # From inside build/libs, so the .sha256 file holds a bare filename and
-      # `sha256sum -c SessionPulse-<version>.jar.sha256` works next to a downloaded jar.
-      - name: Generate Checksum
-        working-directory: build/libs
+          mkdir -p candidate
+          printf '%s\n' "$NOTES" > candidate/release-notes.md
+          printf '%s\n\nRequires Java 21.\n' "$NOTES" > candidate/release-body.md
+      - name: Test source and build candidate once
         env:
-          JAR: ${{ steps.vars.outputs.jar }}
+          VERSION: ${{ steps.vars.outputs.version }}
         run: |
-          sha256sum "$JAR" > "$JAR.sha256"
-          sha256sum -c "$JAR.sha256"
-          cat "$JAR.sha256"
-
-      # The GitHub release is created first and is the one destination that is always
-      # published. Its body is CHANGELOG.md's text, never GitHub's generated notes, which
-      # would list squash-merge titles instead. The default github.token is used; it has
-      # contents: write from the job's permissions above. The id is what the Hangar step
-      # checks, so that step can still run after a Modrinth failure.
-      - name: Create GitHub Release
-        id: github-release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+          chmod +x ./gradlew
+          ./gradlew test shadowJar -PpluginVersion="$VERSION" --no-daemon
+          shopt -s nullglob
+          jars=(build/libs/*.jar)
+          test -f "build/libs/SessionPulse-$VERSION.jar"
+          cp "build/libs/SessionPulse-$VERSION.jar" candidate/
+          (cd candidate && sha256sum "SessionPulse-$VERSION.jar" > "SessionPulse-$VERSION.jar.sha256")
+      - name: Seal candidate manifest
+        env:
+          SHA: ${{ steps.vars.outputs.sha }}
+        run: |
+          python3 scripts/release-candidate.py create --directory candidate --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
+      - name: Retain candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          tag_name: ${{ steps.vars.outputs.tag }}
-          name: SessionPulse ${{ steps.vars.outputs.tag }}
-          body_path: build/release-body.md
-          draft: false
-          prerelease: ${{ steps.vars.outputs.prerelease }}
-          make_latest: ${{ steps.vars.outputs.makeLatest }}
-          generate_release_notes: false
-          fail_on_unmatched_files: true
-          files: |
-            build/libs/${{ steps.vars.outputs.jar }}
-            build/libs/${{ steps.vars.outputs.jar }}.sha256
+          name: release-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: candidate/
+          if-no-files-found: error
+          retention-days: 30
 
-      # Registry publishing is NOT atomic. Once the GitHub release exists, Modrinth and Hangar
-      # are independent of each other: a Modrinth failure fails the job but does not skip
-      # Hangar (see its `if`), and whatever succeeded stays published. Recovery is in
-      # RELEASE_PROCESS.md; a registry rejects a second upload of a version it already holds,
-      # so a re-run fails on the registry that succeeded and publishes the one that did not.
-      #
-      # The project slug is a repository variable so a registry project can be created under
-      # a different slug without editing this file; the default is the expected one.
-      #
-      # The token is passed as this step's input and nowhere else in the job.
-      #
-      # modrinth-featured false and modrinth-unfeature-mode none, because featuring is a
-      # manual decision taken on Modrinth after a stable release (RELEASE_PROCESS.md).
-      # mc-publish's defaults would otherwise decide it on every run: its featured default
-      # features a new version, and its default unfeature mode un-features older versions
-      # whose game versions and loaders fall within this one's - which, with one fixed list,
-      # is every earlier release, including the one a maintainer featured by hand.
-      #
-      # game-versions is explicit and matches releaseGameVersions in build.gradle.kts entry
-      # for entry - edit both together. No `1.20.x` or `1.21.x`: the first would claim
-      # 1.20-1.20.3, below the 1.20.4 compile target, and a wildcard in general widens by
-      # itself whenever the registry learns a new version, which is a compatibility claim
-      # nobody reviewed. 26.x is deliberately absent; see the note on releaseGameVersions.
-      - name: Publish to Modrinth
+  smoke:
+    name: Candidate Smoke (${{ matrix.platform }})
+    needs: candidate
+    env:
+      CANDIDATE_ATTEMPT: ${{ needs.candidate.outputs.attempt }}
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ matrix.platform == 'spigot' && 60 || 35 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [paper, folia, spigot]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-candidate-${{ github.run_id }}-${{ needs.candidate.outputs.attempt }}
+          path: candidate
+      - name: Verify downloaded candidate before tests
+        env:
+          SHA: ${{ needs.candidate.outputs.sha }}
+        run: python3 scripts/release-candidate.py verify --directory candidate --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT"
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          java-version: '21'
+          distribution: temurin
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - name: Build protocol test fixture
+        run: |
+          chmod +x ./gradlew
+          ./gradlew botClientJar --no-daemon
+      - name: Build Spigot test server
+        if: matrix.platform == 'spigot'
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/buildtools" "$RUNNER_TEMP/spigot-jar"
+          cd "$RUNNER_TEMP/buildtools"
+          curl -fsSL --retry 3 --retry-delay 5 -o BuildTools.jar 'https://hub.spigotmc.org/jenkins/job/BuildTools/lastSuccessfulBuild/artifact/target/BuildTools.jar'
+          java -jar BuildTools.jar --rev 1.21.11 --compile SPIGOT --output-dir "$RUNNER_TEMP/spigot-jar" --final-name spigot-1.21.11.jar
+      - name: Exercise downloaded JAR
+        env:
+          VERSION: ${{ needs.candidate.outputs.version }}
+          PLATFORM: ${{ matrix.platform }}
+          SPIGOT_JAR: ${{ runner.temp }}/spigot-jar/spigot-1.21.11.jar
+          BOT_JAR: build/test-fixtures/SessionPulseProbeBot.jar
+        run: |
+          set -euo pipefail
+          chmod +x .github/scripts/smoke-test.sh
+          .github/scripts/smoke-test.sh "$PLATFORM" 1.21.11 "candidate/SessionPulse-$VERSION.jar"
+      - name: Record passing smoke evidence
+        env:
+          SHA: ${{ needs.candidate.outputs.sha }}
+          PLATFORM: ${{ matrix.platform }}
+        run: python3 scripts/release-candidate.py receipt --directory candidate --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT" --platform "$PLATFORM" --output "smoke-$PLATFORM.json"
+      - name: Retain smoke receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: smoke-${{ matrix.platform }}-${{ github.run_id }}-${{ needs.candidate.outputs.attempt }}
+          path: smoke-${{ matrix.platform }}.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Retain smoke logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-log-${{ matrix.platform }}-${{ github.run_id }}-${{ needs.candidate.outputs.attempt }}
+          path: |
+            run-${{ matrix.platform }}/server.log
+            run-${{ matrix.platform }}/bot-*.log
+          if-no-files-found: warn
+          retention-days: 30
+
+  evidence:
+    name: Verify Candidate Evidence
+    needs: [candidate, smoke]
+    env:
+      CANDIDATE_ATTEMPT: ${{ needs.candidate.outputs.attempt }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-candidate-${{ github.run_id }}-${{ needs.candidate.outputs.attempt }}
+          path: candidate
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: smoke-*-${{ github.run_id }}-${{ needs.candidate.outputs.attempt }}
+          path: receipts
+          merge-multiple: true
+      - name: Bind passing test evidence
+        env:
+          SHA: ${{ needs.candidate.outputs.sha }}
+        run: python3 scripts/release-candidate.py evidence --directory candidate --receipts receipts --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT" --output evidence.json
+      - name: Show candidate for approval and registry reconciliation
+        run: |
+          {
+            echo '## Verified release candidate'
+            echo 'Inspect each registry owner inventory, including drafts, unlisted, scheduled and deleted versions. Record only confirmed absent destinations in the release environment RELEASE_ABSENCE_RECONCILIATION variable before approving publication. An omitted API result is not proof of absence.'
+            echo '```json'
+            cat candidate/manifest.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-evidence-${{ github.run_id }}-${{ needs.candidate.outputs.attempt }}
+          path: evidence.json
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Approve and Promote Candidate
+    needs: [candidate, evidence]
+    env:
+      CANDIDATE_ATTEMPT: ${{ needs.candidate.outputs.attempt }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: release
+    # Set only after a maintainer checks the owning registry inventories for this
+    # candidate. Public APIs cannot prove that an omitted version does not exist.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-candidate-${{ github.run_id }}-${{ needs.candidate.outputs.attempt }}
+          path: candidate
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-evidence-${{ github.run_id }}-${{ needs.candidate.outputs.attempt }}
+          path: .
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          java-version: '21'
+          distribution: temurin
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - name: Require environment publishing tokens
+        env:
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+          HANGAR_API_TOKEN: ${{ secrets.HANGAR_API_TOKEN }}
+          MIGRATED: ${{ vars.RELEASE_SECRETS_MIGRATED }}
+        run: |
+          test "$MIGRATED" = true || { echo '::error::Release token migration is incomplete; see #79'; exit 1; }
+          test -n "$MODRINTH_TOKEN" || { echo '::error::Missing release environment MODRINTH_TOKEN'; exit 1; }
+          test -n "$HANGAR_API_TOKEN" || { echo '::error::Missing release environment HANGAR_API_TOKEN'; exit 1; }
+      - name: Check GitHub destination
+        id: github
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ needs.candidate.outputs.sha }}
+        run: python3 scripts/release-destination.py github --directory candidate --evidence evidence.json --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT"
+      - name: Publish GitHub release if absent
+        if: steps.github.outputs.state == 'absent'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.candidate.outputs.version }}
+          PRERELEASE: ${{ needs.candidate.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          args=(--title "SessionPulse $GITHUB_REF_NAME" --notes-file candidate/release-body.md)
+          if [ "$PRERELEASE" = true ]; then args+=(--prerelease --latest=false); else args+=(--latest); fi
+          gh release create "$GITHUB_REF_NAME" "candidate/SessionPulse-$VERSION.jar" "candidate/SessionPulse-$VERSION.jar.sha256" --verify-tag "${args[@]}"
+      - name: Verify GitHub consumer downloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ needs.candidate.outputs.sha }}
+        run: python3 scripts/release-destination.py github --directory candidate --evidence evidence.json --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT" --require-complete
+      - name: Check Modrinth destination
         id: modrinth
-        if: steps.tokens.outputs.modrinth == 'true'
+        env:
+          RELEASE_ABSENCE_RECONCILIATION: ${{ vars.RELEASE_ABSENCE_RECONCILIATION }}
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+          SHA: ${{ needs.candidate.outputs.sha }}
+          PROJECT: ${{ vars.MODRINTH_PROJECT || 'sessionpulse' }}
+        run: python3 scripts/release-destination.py modrinth --project "$PROJECT" --directory candidate --evidence evidence.json --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT"
+      - name: Publish Modrinth if absent
+        if: steps.modrinth.outputs.state == 'absent'
         uses: Kira-NT/mc-publish@52307b03863581dec6b652b83e597aec02ebb075 # v3.3.1
         with:
           modrinth-id: ${{ vars.MODRINTH_PROJECT || 'sessionpulse' }}
           modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
           modrinth-featured: false
           modrinth-unfeature-mode: none
-          name: SessionPulse ${{ steps.vars.outputs.version }}
-          version: ${{ steps.vars.outputs.version }}
-          version-type: ${{ steps.vars.outputs.channel }}
-          changelog-file: build/release-notes.md
-          files: build/libs/${{ steps.vars.outputs.jar }}
-          # EssentialsX is a soft dependency (plugin.yml softdepend), optional and unpinned.
+          name: SessionPulse ${{ needs.candidate.outputs.version }}
+          version: ${{ needs.candidate.outputs.version }}
+          version-type: ${{ needs.candidate.outputs.channel }}
+          changelog-file: candidate/release-notes.md
+          files: candidate/SessionPulse-${{ needs.candidate.outputs.version }}.jar
           dependencies: |
             essentialsx(optional){modrinth:hXiIvTyT}
-          # The four platforms the README claims. The smoke matrix boots Paper, Folia and
-          # Spigot; Purpur is a Paper fork and is not booted in CI.
           loaders: |
             paper
             spigot
@@ -377,49 +335,60 @@ jobs:
             1.21.10
             1.21.11
           java: 21
-
-      # Skipped without a token. The empty-hangarChannel check is only a defensive guard:
-      # every validated tag maps to a Hangar channel, alphas included.
-      #
-      # `!cancelled()` replaces the implicit `success()`, which would skip this step whenever
-      # any earlier step failed - Modrinth included. The GitHub release outcome is then
-      # checked explicitly, so a failure anywhere up to and including the GitHub release (tag
-      # validation, tests, the jar, the checksum) still stops Hangar: those steps all run
-      # before it, and a failure in any of them skips the release step, whose outcome is then
-      # not 'success'.
-      #
-      # HANGAR_API_TOKEN is in this step's env only; the Gradle plugin reads it from there.
-      # The publish task depends on shadowJar and is passed the same -PpluginVersion, so it
-      # reuses the jar built and checksummed above rather than producing a different one.
-      #
-      # The resource page is synced from docs/store-description.md in this same step, so the
-      # token reaches no other step, and only after the version upload succeeded: a failed
-      # upload exits before the sync. A failed sync fails the step and the job, because a
-      # stale store page is a release defect, but the version stays published and the notice
-      # written before the sync says so. After a failed sync, run the sync task by hand
-      # (RELEASE_PROCESS.md) rather than re-running the job, whose upload would be rejected
-      # as a duplicate before the sync is reached.
-      - name: Publish to Hangar
-        if: >-
-          !cancelled()
-          && steps.github-release.outcome == 'success'
-          && steps.tokens.outputs.hangar == 'true'
-          && steps.vars.outputs.hangarChannel != ''
+      - name: Verify Modrinth consumer download
         env:
+          RELEASE_ABSENCE_RECONCILIATION: ${{ vars.RELEASE_ABSENCE_RECONCILIATION }}
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+          SHA: ${{ needs.candidate.outputs.sha }}
+          PROJECT: ${{ vars.MODRINTH_PROJECT || 'sessionpulse' }}
+        run: python3 scripts/release-destination.py modrinth --project "$PROJECT" --directory candidate --evidence evidence.json --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT" --require-complete
+      - name: Check Hangar destination
+        id: hangar
+        env:
+          RELEASE_ABSENCE_RECONCILIATION: ${{ vars.RELEASE_ABSENCE_RECONCILIATION }}
           HANGAR_API_TOKEN: ${{ secrets.HANGAR_API_TOKEN }}
-          VERSION: ${{ steps.vars.outputs.version }}
-          HANGAR_CHANNEL: ${{ steps.vars.outputs.hangarChannel }}
-          HANGAR_PROJECT: ${{ vars.HANGAR_PROJECT || 'SessionPulse' }}
+          SHA: ${{ needs.candidate.outputs.sha }}
+          PROJECT: ${{ vars.HANGAR_PROJECT || 'SessionPulse' }}
+        run: python3 scripts/release-destination.py hangar --project "$PROJECT" --directory candidate --evidence evidence.json --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT"
+      - name: Validate Hangar task graph
+        if: steps.hangar.outputs.state == 'absent'
+        env:
+          VERSION: ${{ needs.candidate.outputs.version }}
+          CHANNEL: ${{ needs.candidate.outputs.hangar_channel }}
+          PROJECT: ${{ vars.HANGAR_PROJECT || 'SessionPulse' }}
         run: |
-          ./gradlew publishPluginPublicationToHangar \
-            -PpluginVersion="$VERSION" \
-            -PhangarChannel="$HANGAR_CHANNEL" \
-            -PhangarProject="$HANGAR_PROJECT" \
-            --no-daemon
-          echo "::notice title=Hangar::$VERSION is published to the Hangar $HANGAR_CHANNEL channel."
-          if ! ./gradlew syncPluginPublicationMainResourcePagePageToHangar \
-            -PhangarProject="$HANGAR_PROJECT" \
-            --no-daemon; then
-            echo "::error title=Hangar page sync::$VERSION is published, but the resource page was not synced."
-            exit 1
-          fi
+          chmod +x ./gradlew
+          ./gradlew publishPluginPublicationToHangar --dry-run -PpluginVersion="$VERSION" -PhangarChannel="$CHANNEL" -PhangarProject="$PROJECT" -PreleaseJar="candidate/SessionPulse-$VERSION.jar" --no-daemon > task-graph.txt
+          cat task-graph.txt
+          python3 scripts/check-hangar-task-graph.py task-graph.txt
+      - name: Publish Hangar if absent
+        if: steps.hangar.outputs.state == 'absent'
+        env:
+          RELEASE_ABSENCE_RECONCILIATION: ${{ vars.RELEASE_ABSENCE_RECONCILIATION }}
+          SHA: ${{ needs.candidate.outputs.sha }}
+          VERSION: ${{ needs.candidate.outputs.version }}
+          CHANNEL: ${{ needs.candidate.outputs.hangar_channel }}
+          PROJECT: ${{ vars.HANGAR_PROJECT || 'SessionPulse' }}
+          HANGAR_API_TOKEN: ${{ secrets.HANGAR_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          python3 scripts/release-destination.py hangar --project "$PROJECT" --directory candidate --evidence evidence.json --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT" --require-absent
+          mkdir -p build
+          cp candidate/release-notes.md build/release-notes.md
+          BEFORE="$(sha256sum "candidate/SessionPulse-$VERSION.jar")"
+          ./gradlew publishPluginPublicationToHangar -PpluginVersion="$VERSION" -PhangarChannel="$CHANNEL" -PhangarProject="$PROJECT" -PreleaseJar="candidate/SessionPulse-$VERSION.jar" --no-daemon
+          test "$BEFORE" = "$(sha256sum "candidate/SessionPulse-$VERSION.jar")"
+      - name: Verify Hangar receipt before page sync
+        env:
+          RELEASE_ABSENCE_RECONCILIATION: ${{ vars.RELEASE_ABSENCE_RECONCILIATION }}
+          HANGAR_API_TOKEN: ${{ secrets.HANGAR_API_TOKEN }}
+          SHA: ${{ needs.candidate.outputs.sha }}
+          PROJECT: ${{ vars.HANGAR_PROJECT || 'SessionPulse' }}
+        run: |
+          python3 scripts/release-destination.py hangar --project "$PROJECT" --directory candidate --evidence evidence.json --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT" --require-complete
+      - name: Sync Hangar resource page
+        env:
+          PROJECT: ${{ vars.HANGAR_PROJECT || 'SessionPulse' }}
+          HANGAR_API_TOKEN: ${{ secrets.HANGAR_API_TOKEN }}
+        run: |
+          ./gradlew syncPluginPublicationMainResourcePagePageToHangar -PhangarProject="$PROJECT" --no-daemon
