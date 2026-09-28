@@ -15,7 +15,8 @@ destination = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(destination)
 HANGAR_SESSION = destination.hangar_session
 
-MANIFEST = {"version": "1.2.3-rc.1", "channel": "beta", "files": {"SessionPulse-1.2.3-rc.1.jar": hashlib.sha256(b"candidate").hexdigest()}}
+MANIFEST = {"candidate_id": "52-1-aaaaaaaaaaaa", "source_sha": "a" * 40, "tag": "v1.2.3-rc.1",
+            "version": "1.2.3-rc.1", "channel": "beta", "files": {"SessionPulse-1.2.3-rc.1.jar": hashlib.sha256(b"candidate").hexdigest()}}
 
 
 class ReleaseDestinationTest(unittest.TestCase):
@@ -30,6 +31,22 @@ class ReleaseDestinationTest(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.directory = Path(self.temp.name)
         (self.directory / "release-notes.md").write_text("Notes\n")
+
+    def modrinth_version(self, status="listed"):
+        return {"id": "version-id", "project_id": "project-id", "status": status,
+                "version_number": "1.2.3-rc.1", "version_type": "beta", "changelog": "Notes",
+                "files": [{"filename": "SessionPulse-1.2.3-rc.1.jar", "url": "https://cdn.modrinth.com/file.jar",
+                           "hashes": {"sha1": hashlib.sha1(b"candidate").hexdigest(), "sha512": hashlib.sha512(b"candidate").hexdigest()}}]}
+
+    def hangar_version(self, visibility="public"):
+        return {"name": "1.2.3-rc.1", "visibility": visibility, "channel": {"name": "Beta"}, "description": "Notes",
+                "downloads": {"PAPER": {"fileInfo": {"name": "SessionPulse-1.2.3-rc.1.jar",
+                                                       "sha256Hash": MANIFEST["files"]["SessionPulse-1.2.3-rc.1.jar"]},
+                                       "downloadUrl": "https://hangarcdn.papermc.io/file.jar"}}}
+
+    def absence_record(self, destination="modrinth", project="sessionpulse"):
+        return {**{key: MANIFEST[key] for key in ("candidate_id", "tag", "version", "source_sha")},
+                "confirmed_absent": {destination: project}}
 
     @patch.object(destination.urllib.request, "urlopen")
     def test_hangar_auth_failure_never_exposes_key_or_url(self, urlopen):
@@ -109,24 +126,41 @@ class ReleaseDestinationTest(unittest.TestCase):
             destination.github(self.directory, manifest, "Ninja6-MC/SessionPulse")
 
     @patch.object(destination, "request")
-    def test_modrinth_missing_version_is_only_publishable_state(self, request):
+    def test_modrinth_omitted_draft_is_uncertain_without_reconciliation(self, request):
         request.return_value = (200, [{"version_number": "1.2.2"}])
-        self.assertEqual(destination.modrinth(MANIFEST, "sessionpulse", self.directory), "absent")
+        with self.assertRaisesRegex(ValueError, "absence is uncertain"):
+            destination.modrinth(MANIFEST, "sessionpulse", self.directory)
+        with patch.dict(destination.os.environ, {"RELEASE_ABSENCE_RECONCILIATION": json.dumps(self.absence_record())}):
+            self.assertEqual(destination.modrinth(MANIFEST, "sessionpulse", self.directory), "absent")
+
+    def test_absence_confirmation_is_bound_to_candidate_and_project(self):
+        for key in ("candidate_id", "tag", "version", "source_sha"):
+            record = self.absence_record()
+            record[key] = "different"
+            with patch.dict(destination.os.environ, {"RELEASE_ABSENCE_RECONCILIATION": json.dumps(record)}):
+                with self.assertRaisesRegex(ValueError, "mismatched"):
+                    destination.reconciled_absence(MANIFEST, "modrinth", "sessionpulse")
+        with patch.dict(destination.os.environ, {"RELEASE_ABSENCE_RECONCILIATION": json.dumps(self.absence_record())}):
+            with self.assertRaisesRegex(ValueError, "does not confirm"):
+                destination.reconciled_absence(MANIFEST, "hangar", "SessionPulse")
+            with self.assertRaisesRegex(ValueError, "does not confirm"):
+                destination.reconciled_absence(MANIFEST, "modrinth", "different-project")
 
     @patch.object(destination.urllib.request, "urlopen")
     @patch.object(destination, "request")
     def test_modrinth_matching_version_is_skipped(self, request, urlopen):
         urlopen.return_value.__enter__.return_value = io.BytesIO(b"candidate")
-        request.return_value = (200, [{"version_number": "1.2.3-rc.1", "version_type": "beta",
-                                      "changelog": "Notes", "files": [{"filename": "SessionPulse-1.2.3-rc.1.jar", "url": "https://cdn.modrinth.com/file.jar"}]}])
+        version = self.modrinth_version()
+        request.side_effect = [(200, [version]), (200, version)]
         self.assertEqual(destination.modrinth(MANIFEST, "sessionpulse", self.directory), "complete")
+        self.assertEqual(len(request.call_args_list[-1].args), 1)
 
     @patch.object(destination.urllib.request, "urlopen")
     @patch.object(destination, "request")
     def test_modrinth_conflicting_hash_stops_retry(self, request, urlopen):
         urlopen.return_value.__enter__.return_value = io.BytesIO(b"different")
-        request.return_value = (200, [{"version_number": "1.2.3-rc.1", "version_type": "beta",
-                                      "changelog": "Notes", "files": [{"filename": "SessionPulse-1.2.3-rc.1.jar", "url": "https://cdn.modrinth.com/file.jar"}]}])
+        version = self.modrinth_version()
+        request.side_effect = [(200, [version]), (200, version)]
         with self.assertRaisesRegex(ValueError, "conflict"):
             destination.modrinth(MANIFEST, "sessionpulse", self.directory)
 
@@ -134,17 +168,44 @@ class ReleaseDestinationTest(unittest.TestCase):
     @patch.object(destination, "request")
     def test_hangar_matching_version_skips_and_conflict_stops(self, request, urlopen):
         urlopen.return_value.__enter__.return_value = io.BytesIO(b"candidate")
-        version = {"name": "1.2.3-rc.1", "channel": {"name": "Beta"}, "description": "Notes",
-                   "downloads": {"PAPER": {"fileInfo": {"name": "SessionPulse-1.2.3-rc.1.jar",
-                                                           "sha256Hash": MANIFEST["files"]["SessionPulse-1.2.3-rc.1.jar"]},
-                                            "downloadUrl": "https://hangarcdn.papermc.io/file.jar"}}}
+        version = self.hangar_version()
         request.return_value = (200, version)
         self.assertEqual(destination.hangar({**MANIFEST, "hangar_channel": "Beta"}, "SessionPulse", self.directory), "complete")
         version["downloads"]["PAPER"]["fileInfo"]["sha256Hash"] = "b" * 64
         with self.assertRaisesRegex(ValueError, "conflicts"):
             destination.hangar({**MANIFEST, "hangar_channel": "Beta"}, "SessionPulse", self.directory)
         request.return_value = (404, None)
-        self.assertEqual(destination.hangar({**MANIFEST, "hangar_channel": "Beta"}, "SessionPulse", self.directory), "absent")
+        with self.assertRaisesRegex(ValueError, "absence is uncertain"):
+            destination.hangar({**MANIFEST, "hangar_channel": "Beta"}, "SessionPulse", self.directory)
+        with patch.dict(destination.os.environ, {"RELEASE_ABSENCE_RECONCILIATION": json.dumps(self.absence_record("hangar", "SessionPulse"))}):
+            self.assertEqual(destination.hangar({**MANIFEST, "hangar_channel": "Beta"}, "SessionPulse", self.directory), "absent")
+
+    @patch.object(destination, "request")
+    def test_modrinth_nonpublic_status_never_counts_as_complete(self, request):
+        for status in ("draft", "scheduled", "archived", "unlisted", "unknown", None):
+            with self.subTest(status=status):
+                request.return_value = (200, [self.modrinth_version(status)])
+                with self.assertRaisesRegex(ValueError, "not a listed public release"):
+                    destination.modrinth(MANIFEST, "sessionpulse", self.directory)
+
+    @patch.object(destination, "request")
+    def test_hangar_nonpublic_visibility_never_counts_as_complete(self, request):
+        for visibility in ("new", "needsApproval", "softDelete", "hidden", None):
+            with self.subTest(visibility=visibility):
+                request.return_value = (200, self.hangar_version(visibility))
+                with self.assertRaisesRegex(ValueError, "not public"):
+                    destination.hangar({**MANIFEST, "hangar_channel": "Beta"}, "SessionPulse", self.directory)
+
+    @patch.object(destination, "request")
+    def test_anonymous_visibility_and_metadata_must_match(self, request):
+        for public in ((404, None), (200, {**self.modrinth_version(), "status": "draft"})):
+            request.side_effect = [(200, [self.modrinth_version()]), public]
+            with self.assertRaisesRegex(ValueError, "not anonymously accessible"):
+                destination.modrinth(MANIFEST, "sessionpulse", self.directory)
+        for public in ((404, None), (200, self.hangar_version("needsApproval"))):
+            request.side_effect = [(200, self.hangar_version()), public]
+            with self.assertRaisesRegex(ValueError, "not anonymously accessible"):
+                destination.hangar({**MANIFEST, "hangar_channel": "Beta"}, "SessionPulse", self.directory)
 
 
 if __name__ == "__main__":

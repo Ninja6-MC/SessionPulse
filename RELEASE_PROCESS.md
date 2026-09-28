@@ -148,6 +148,9 @@ GitHub Actions (`.github/workflows/release.yml`) will:
     and checks the retained candidate and evidence, and resolves the tag on `origin`
     before every destination. A moved tag, expired artifact, failed test record or
     changed byte stops publication.
+    Before approval, inspect the verified candidate summary and complete registry
+    absence reconciliation as described below. No omitted public API result authorizes
+    an upload by itself.
 11. Publish the unchanged jar to GitHub Releases, Modrinth and Paper Hangar in that
     order. Pre-releases retain their tier; only stable tags become GitHub Latest. Both
     registries declare EssentialsX as an optional, unpinned dependency
@@ -208,7 +211,43 @@ Conflicting or uncertain bytes stop the retry for maintainer reconciliation rath
 than overwriting a version. Inspect the published files against `manifest.json`, then
 decide how to recover the remaining work.
 
-Registry lookups use the environment tokens so hidden or draft versions are included.
+Registry lookups use the environment tokens, but Modrinth's version list excludes
+draft and unlisted versions even when authenticated, and Hangar can conceal
+soft-deleted versions. An omitted version or HTTP 404 therefore stops publication
+by default. Inspect the owner inventory in each registry, including drafts, unlisted,
+scheduled, hidden and deleted versions, before confirming that the intended version
+does not exist. Resolve any existing nonpublic version manually; do not attest that
+it is absent or create another version over it.
+
+After that audit, set the `release` environment variable
+`RELEASE_ABSENCE_RECONCILIATION` to JSON using the exact fields from the verified
+candidate's manifest and only the audited destinations, then approve that candidate:
+
+```json
+{
+  "candidate_id": "<manifest candidate_id>",
+  "source_sha": "<manifest source_sha>",
+  "tag": "<manifest tag>",
+  "version": "<manifest version>",
+  "confirmed_absent": {
+    "modrinth": "sessionpulse",
+    "hangar": "SessionPulse"
+  }
+}
+```
+
+Use the configured project IDs or slugs if their repository variables differ from
+the defaults. This record is rejected for a different candidate, tag, version,
+source commit, project or destination. Replace it for each new candidate; it cannot
+authorize a rebuild or a new run's candidate. Re-runs of the publisher retain the
+same candidate and require approval again. Matching existing destinations are
+checked before this record is considered, so a stale absence assertion cannot
+override conflicting bytes or nonpublic metadata.
+
+Only Modrinth `listed` status and Hangar `public` visibility count as complete,
+with matching version, notes and channel, successful anonymous version lookup and
+matching anonymously downloaded CDN bytes. Draft, scheduled, archived, unlisted,
+new, needs-approval, hidden and soft-deleted versions require reconciliation.
 Retain the read permissions above when rotating tokens; authentication or lookup
 failure stops publication.
 

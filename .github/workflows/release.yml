@@ -211,6 +211,15 @@ jobs:
         env:
           SHA: ${{ needs.candidate.outputs.sha }}
         run: python3 scripts/release-candidate.py evidence --directory candidate --receipts receipts --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT" --output evidence.json
+      - name: Show candidate for approval and registry reconciliation
+        run: |
+          {
+            echo '## Verified release candidate'
+            echo 'Inspect each registry owner inventory, including drafts, unlisted, scheduled and deleted versions. Record only confirmed absent destinations in the release environment RELEASE_ABSENCE_RECONCILIATION variable before approving publication. An omitted API result is not proof of absence.'
+            echo '```json'
+            cat candidate/manifest.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-evidence-${{ github.run_id }}-${{ needs.candidate.outputs.attempt }}
@@ -226,6 +235,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: release
+    # Set only after a maintainer checks the owning registry inventories for this
+    # candidate. Public APIs cannot prove that an omitted version does not exist.
     permissions:
       contents: write
     steps:
@@ -282,6 +293,7 @@ jobs:
       - name: Check Modrinth destination
         id: modrinth
         env:
+          RELEASE_ABSENCE_RECONCILIATION: ${{ vars.RELEASE_ABSENCE_RECONCILIATION }}
           MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
           SHA: ${{ needs.candidate.outputs.sha }}
           PROJECT: ${{ vars.MODRINTH_PROJECT || 'sessionpulse' }}
@@ -325,6 +337,7 @@ jobs:
           java: 21
       - name: Verify Modrinth consumer download
         env:
+          RELEASE_ABSENCE_RECONCILIATION: ${{ vars.RELEASE_ABSENCE_RECONCILIATION }}
           MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
           SHA: ${{ needs.candidate.outputs.sha }}
           PROJECT: ${{ vars.MODRINTH_PROJECT || 'sessionpulse' }}
@@ -332,6 +345,7 @@ jobs:
       - name: Check Hangar destination
         id: hangar
         env:
+          RELEASE_ABSENCE_RECONCILIATION: ${{ vars.RELEASE_ABSENCE_RECONCILIATION }}
           HANGAR_API_TOKEN: ${{ secrets.HANGAR_API_TOKEN }}
           SHA: ${{ needs.candidate.outputs.sha }}
           PROJECT: ${{ vars.HANGAR_PROJECT || 'SessionPulse' }}
@@ -350,6 +364,7 @@ jobs:
       - name: Publish Hangar if absent
         if: steps.hangar.outputs.state == 'absent'
         env:
+          RELEASE_ABSENCE_RECONCILIATION: ${{ vars.RELEASE_ABSENCE_RECONCILIATION }}
           SHA: ${{ needs.candidate.outputs.sha }}
           VERSION: ${{ needs.candidate.outputs.version }}
           CHANNEL: ${{ needs.candidate.outputs.hangar_channel }}
@@ -365,6 +380,7 @@ jobs:
           test "$BEFORE" = "$(sha256sum "candidate/SessionPulse-$VERSION.jar")"
       - name: Verify Hangar receipt before page sync
         env:
+          RELEASE_ABSENCE_RECONCILIATION: ${{ vars.RELEASE_ABSENCE_RECONCILIATION }}
           HANGAR_API_TOKEN: ${{ secrets.HANGAR_API_TOKEN }}
           SHA: ${{ needs.candidate.outputs.sha }}
           PROJECT: ${{ vars.HANGAR_PROJECT || 'SessionPulse' }}

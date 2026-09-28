@@ -54,6 +54,23 @@ def tag_sha(tag):
     return peeled[0] if peeled else direct[0]
 
 
+def reconciled_absence(manifest, destination, project):
+    """Only a candidate-bound maintainer inventory audit can resolve uncertain absence."""
+    try:
+        record = json.loads(os.environ.get("RELEASE_ABSENCE_RECONCILIATION", "null"))
+    except ValueError:
+        raise ValueError("Release absence reconciliation is invalid JSON") from None
+    if not isinstance(record, dict):
+        raise ValueError(f"{destination} absence is uncertain; reconcile the owner inventory before upload")
+    for key in ("candidate_id", "tag", "version", "source_sha"):
+        if record.get(key) != manifest.get(key):
+            raise ValueError(f"Release absence reconciliation has mismatched {key}")
+    confirmed = record.get("confirmed_absent")
+    if not isinstance(confirmed, dict) or confirmed.get(destination) != project:
+        raise ValueError(f"Release absence reconciliation does not confirm {destination} project {project}")
+    return "absent"
+
+
 def github(directory, manifest, repo):
     tag = manifest["tag"]
     process = subprocess.run(["gh", "api", f"repos/{repo}/releases/tags/{tag}"], capture_output=True, text=True)
@@ -98,9 +115,16 @@ def modrinth(manifest, project, directory):
         raise ValueError("Cannot inspect Modrinth versions")
     found = [item for item in versions if item.get("version_number") == manifest["version"]]
     if not found:
-        return "absent"
+        return reconciled_absence(manifest, "modrinth", project)
     if len(found) != 1:
         raise ValueError("Multiple Modrinth versions match candidate")
+    version = found[0]
+    if version.get("status") != "listed" or not version.get("id"):
+        raise ValueError("Existing Modrinth version is not a listed public release")
+    public_status, public_version = request("https://api.modrinth.com/v2/version/" + urllib.parse.quote(version["id"], safe=""))
+    fields = ("id", "project_id", "version_number", "version_type", "status", "changelog", "files", "loaders", "game_versions", "dependencies")
+    if public_status != 200 or not isinstance(public_version, dict) or any(public_version.get(key) != version.get(key) for key in fields):
+        raise ValueError("Modrinth version is not anonymously accessible with matching metadata")
     jar = f"SessionPulse-{manifest['version']}.jar"
     files = found[0].get("files", [])
     if found[0].get("version_type") != manifest["channel"] or len(files) != 1 or files[0].get("filename") != jar:
@@ -122,8 +146,14 @@ def hangar(manifest, project, directory):
     url = f"https://hangar.papermc.io/api/v1/projects/{urllib.parse.quote(project, safe='')}/versions/{urllib.parse.quote(manifest['version'], safe='')}"
     status, version = request(url, headers)
     if status == 404:
-        return "absent"
+        return reconciled_absence(manifest, "hangar", project)
     if status == 200:
+        if version.get("visibility") != "public":
+            raise ValueError("Existing Hangar version is not public")
+        public_status, public_version = request(url)
+        fields = ("name", "visibility", "channel", "description", "downloads", "platformDependencies", "pluginDependencies")
+        if public_status != 200 or not isinstance(public_version, dict) or any(public_version.get(key) != version.get(key) for key in fields):
+            raise ValueError("Hangar version is not anonymously accessible with matching metadata")
         jar = f"SessionPulse-{manifest['version']}.jar"
         download = version.get("downloads", {}).get("PAPER", {})
         info = download.get("fileInfo") or {}
