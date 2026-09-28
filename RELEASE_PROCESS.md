@@ -174,12 +174,14 @@ registry secrets. Never approve a deployment from automation.
 | Environment secret | Used by | Required scope |
 | :--- | :--- | :--- |
 | `MODRINTH_TOKEN` | Modrinth lookup and upload | Read projects and versions; create versions on the SessionPulse project |
-| `HANGAR_API_TOKEN` | Hangar lookup, version upload and page sync | Project member's key with `view_public_info`, `create_version`, `edit_page` |
+| `HANGAR_API_TOKEN` | Hangar lookup, version upload and page sync | Key covering SessionPulse, owned by a project member, with `create_version`, `edit_page` |
 
 A Hangar API key holding only `create_version` still uploads the version, but Hangar
 rejects the page sync that follows. That fails the job whenever the page text changed;
 when it did not, the only sign is an `Error using endpoint` line in the step log. Replace
 the key with one holding both permissions before the first release that runs the sync.
+The version lookup endpoint used here checks project access and visibility; it does
+not require a separate `view_public_info` key permission.
 
 Both tokens are required. Issue #79 tracks their migration: create new tokens, add them
 as `release` environment secrets, delete the repository secrets, and revoke the old
