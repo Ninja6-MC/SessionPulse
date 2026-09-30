@@ -148,8 +148,11 @@ GitHub Actions (`.github/workflows/release.yml`) will:
     and checks the retained candidate and evidence, and resolves the tag on `origin`
     before every destination. A moved tag, expired artifact, failed test record or
     changed byte stops publication.
-    Before approval, inspect the verified candidate summary and complete registry
-    absence reconciliation as described below. No omitted public API result authorizes
+    Before approval, inspect the verified candidate summary, which prints the
+    candidate-specific reconciliation record, and complete the registry inventory audit
+    described below. After approval, the publisher checks both registry destinations,
+    anonymous Modrinth project visibility, the Hangar task graph and the GitHub
+    destination before its first public write. No omitted public API result authorizes
     an upload by itself.
 11. Publish the unchanged jar to GitHub Releases, Modrinth and Paper Hangar in that
     order. Pre-releases retain their tier; only stable tags become GitHub Latest. Both
@@ -239,7 +242,9 @@ candidate's manifest and only the audited destinations, then approve that candid
 ```
 
 Use the configured project IDs or slugs if their repository variables differ from
-the defaults. This record is rejected for a different candidate, tag, version,
+the defaults. The evidence summary prints the resolved repository variables; if the
+release environment overrides either project slug, replace that value in the record.
+The record is rejected for a different candidate, tag, version,
 source commit, project or destination. Replace it for each new candidate; it cannot
 authorize a rebuild or a new run's candidate. Re-runs of the publisher retain the
 same candidate and require approval again. Matching existing destinations are

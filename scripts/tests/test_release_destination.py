@@ -128,7 +128,7 @@ class ReleaseDestinationTest(unittest.TestCase):
     @patch.object(destination, "request")
     def test_modrinth_omitted_draft_is_uncertain_without_reconciliation(self, request):
         request.return_value = (200, [{"version_number": "1.2.2"}])
-        with self.assertRaisesRegex(ValueError, "absence is uncertain"):
+        with self.assertRaisesRegex(ValueError, "Missing release environment RELEASE_ABSENCE_RECONCILIATION"):
             destination.modrinth(MANIFEST, "sessionpulse", self.directory)
         with patch.dict(destination.os.environ, {"RELEASE_ABSENCE_RECONCILIATION": json.dumps(self.absence_record())}):
             self.assertEqual(destination.modrinth(MANIFEST, "sessionpulse", self.directory), "absent")
@@ -145,6 +145,25 @@ class ReleaseDestinationTest(unittest.TestCase):
                 destination.reconciled_absence(MANIFEST, "hangar", "SessionPulse")
             with self.assertRaisesRegex(ValueError, "does not confirm"):
                 destination.reconciled_absence(MANIFEST, "modrinth", "different-project")
+
+    def test_reconciliation_missing_malformed_and_matching(self):
+        with patch.dict(destination.os.environ, {"RELEASE_ABSENCE_RECONCILIATION": ""}):
+            with self.assertRaisesRegex(ValueError, "Missing release environment RELEASE_ABSENCE_RECONCILIATION"):
+                destination.reconciled_absence(MANIFEST, "modrinth", "sessionpulse")
+        with patch.dict(destination.os.environ, {"RELEASE_ABSENCE_RECONCILIATION": "{"}):
+            with self.assertRaisesRegex(ValueError, "malformed JSON"):
+                destination.reconciled_absence(MANIFEST, "modrinth", "sessionpulse")
+        with patch.dict(destination.os.environ, {"RELEASE_ABSENCE_RECONCILIATION": json.dumps(self.absence_record())}):
+            self.assertEqual(destination.reconciled_absence(MANIFEST, "modrinth", "sessionpulse"), "absent")
+
+    @patch.object(destination, "request")
+    def test_preflight_requires_anonymous_modrinth_project(self, request):
+        request.return_value = (404, None)
+        with self.assertRaisesRegex(ValueError, "not anonymously accessible"):
+            destination.require_public_modrinth_project("sessionpulse")
+        request.return_value = (200, {"id": "project-id"})
+        destination.require_public_modrinth_project("sessionpulse")
+        self.assertEqual(request.call_args.args[0], "https://api.modrinth.com/v2/project/sessionpulse")
 
     @patch.object(destination.urllib.request, "urlopen")
     @patch.object(destination, "request")
@@ -175,7 +194,7 @@ class ReleaseDestinationTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "conflicts"):
             destination.hangar({**MANIFEST, "hangar_channel": "Beta"}, "SessionPulse", self.directory)
         request.return_value = (404, None)
-        with self.assertRaisesRegex(ValueError, "absence is uncertain"):
+        with self.assertRaisesRegex(ValueError, "Missing release environment RELEASE_ABSENCE_RECONCILIATION"):
             destination.hangar({**MANIFEST, "hangar_channel": "Beta"}, "SessionPulse", self.directory)
         with patch.dict(destination.os.environ, {"RELEASE_ABSENCE_RECONCILIATION": json.dumps(self.absence_record("hangar", "SessionPulse"))}):
             self.assertEqual(destination.hangar({**MANIFEST, "hangar_channel": "Beta"}, "SessionPulse", self.directory), "absent")

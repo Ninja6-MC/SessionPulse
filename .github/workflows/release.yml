@@ -212,12 +212,21 @@ jobs:
           SHA: ${{ needs.candidate.outputs.sha }}
         run: python3 scripts/release-candidate.py evidence --directory candidate --receipts receipts --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT" --output evidence.json
       - name: Show candidate for approval and registry reconciliation
+        env:
+          SHA: ${{ needs.candidate.outputs.sha }}
+          MODRINTH_PROJECT: ${{ vars.MODRINTH_PROJECT || 'sessionpulse' }}
+          HANGAR_PROJECT: ${{ vars.HANGAR_PROJECT || 'SessionPulse' }}
         run: |
           {
             echo '## Verified release candidate'
             echo 'Inspect each registry owner inventory, including drafts, unlisted, scheduled and deleted versions. Record only confirmed absent destinations in the release environment RELEASE_ABSENCE_RECONCILIATION variable before approving publication. An omitted API result is not proof of absence.'
             echo '```json'
             cat candidate/manifest.json
+            echo '```'
+            echo '### RELEASE_ABSENCE_RECONCILIATION value'
+            echo 'Copy this record after confirming both destination versions are absent. If a project slug is overridden in the release environment, replace that project value before saving it.'
+            echo '```json'
+            python3 scripts/release-candidate.py reconciliation --directory candidate --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT" --modrinth-project "$MODRINTH_PROJECT" --hangar-project "$HANGAR_PROJECT"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -268,6 +277,32 @@ jobs:
           test "$MIGRATED" = true || { echo '::error::Release token migration is incomplete; see #79'; exit 1; }
           test -n "$MODRINTH_TOKEN" || { echo '::error::Missing release environment MODRINTH_TOKEN'; exit 1; }
           test -n "$HANGAR_API_TOKEN" || { echo '::error::Missing release environment HANGAR_API_TOKEN'; exit 1; }
+      - name: Preflight Modrinth before publication
+        env:
+          RELEASE_ABSENCE_RECONCILIATION: ${{ vars.RELEASE_ABSENCE_RECONCILIATION }}
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+          SHA: ${{ needs.candidate.outputs.sha }}
+          PROJECT: ${{ vars.MODRINTH_PROJECT || 'sessionpulse' }}
+        run: python3 scripts/release-destination.py modrinth --project "$PROJECT" --directory candidate --evidence evidence.json --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT" --require-public-project
+      - name: Preflight Hangar before publication
+        id: hangar_preflight
+        env:
+          RELEASE_ABSENCE_RECONCILIATION: ${{ vars.RELEASE_ABSENCE_RECONCILIATION }}
+          HANGAR_API_TOKEN: ${{ secrets.HANGAR_API_TOKEN }}
+          SHA: ${{ needs.candidate.outputs.sha }}
+          PROJECT: ${{ vars.HANGAR_PROJECT || 'SessionPulse' }}
+        run: python3 scripts/release-destination.py hangar --project "$PROJECT" --directory candidate --evidence evidence.json --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT"
+      - name: Validate Hangar task graph before publication
+        if: steps.hangar_preflight.outputs.state == 'absent'
+        env:
+          VERSION: ${{ needs.candidate.outputs.version }}
+          CHANNEL: ${{ needs.candidate.outputs.hangar_channel }}
+          PROJECT: ${{ vars.HANGAR_PROJECT || 'SessionPulse' }}
+        run: |
+          chmod +x ./gradlew
+          ./gradlew publishPluginPublicationToHangar --dry-run -PpluginVersion="$VERSION" -PhangarChannel="$CHANNEL" -PhangarProject="$PROJECT" -PreleaseJar="candidate/SessionPulse-$VERSION.jar" --no-daemon > task-graph.txt
+          cat task-graph.txt
+          python3 scripts/check-hangar-task-graph.py task-graph.txt
       - name: Check GitHub destination
         id: github
         env:
@@ -350,17 +385,6 @@ jobs:
           SHA: ${{ needs.candidate.outputs.sha }}
           PROJECT: ${{ vars.HANGAR_PROJECT || 'SessionPulse' }}
         run: python3 scripts/release-destination.py hangar --project "$PROJECT" --directory candidate --evidence evidence.json --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT"
-      - name: Validate Hangar task graph
-        if: steps.hangar.outputs.state == 'absent'
-        env:
-          VERSION: ${{ needs.candidate.outputs.version }}
-          CHANNEL: ${{ needs.candidate.outputs.hangar_channel }}
-          PROJECT: ${{ vars.HANGAR_PROJECT || 'SessionPulse' }}
-        run: |
-          chmod +x ./gradlew
-          ./gradlew publishPluginPublicationToHangar --dry-run -PpluginVersion="$VERSION" -PhangarChannel="$CHANNEL" -PhangarProject="$PROJECT" -PreleaseJar="candidate/SessionPulse-$VERSION.jar" --no-daemon > task-graph.txt
-          cat task-graph.txt
-          python3 scripts/check-hangar-task-graph.py task-graph.txt
       - name: Publish Hangar if absent
         if: steps.hangar.outputs.state == 'absent'
         env:

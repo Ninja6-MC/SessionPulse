@@ -56,12 +56,15 @@ def tag_sha(tag):
 
 def reconciled_absence(manifest, destination, project):
     """Only a candidate-bound maintainer inventory audit can resolve uncertain absence."""
+    raw = os.environ.get("RELEASE_ABSENCE_RECONCILIATION", "")
+    if not raw.strip():
+        raise ValueError("Missing release environment RELEASE_ABSENCE_RECONCILIATION; audit the registry owner inventory and set the candidate record before approval")
     try:
-        record = json.loads(os.environ.get("RELEASE_ABSENCE_RECONCILIATION", "null"))
+        record = json.loads(raw)
     except ValueError:
-        raise ValueError("Release absence reconciliation is invalid JSON") from None
+        raise ValueError("RELEASE_ABSENCE_RECONCILIATION is malformed JSON") from None
     if not isinstance(record, dict):
-        raise ValueError(f"{destination} absence is uncertain; reconcile the owner inventory before upload")
+        raise ValueError("RELEASE_ABSENCE_RECONCILIATION must be a JSON object")
     for key in ("candidate_id", "tag", "version", "source_sha"):
         if record.get(key) != manifest.get(key):
             raise ValueError(f"Release absence reconciliation has mismatched {key}")
@@ -141,6 +144,13 @@ def modrinth(manifest, project, directory):
     return "complete"
 
 
+def require_public_modrinth_project(project):
+    url = f"https://api.modrinth.com/v2/project/{urllib.parse.quote(project, safe='')}"
+    status, public_project = request(url)
+    if status != 200 or not isinstance(public_project, dict) or not public_project.get("id"):
+        raise ValueError("Modrinth project is not anonymously accessible; resolve project review before publication")
+
+
 def hangar(manifest, project, directory):
     headers = hangar_session()
     url = f"https://hangar.papermc.io/api/v1/projects/{urllib.parse.quote(project, safe='')}/versions/{urllib.parse.quote(manifest['version'], safe='')}"
@@ -187,6 +197,7 @@ def main():
     parser.add_argument("--project")
     parser.add_argument("--require-complete", action="store_true")
     parser.add_argument("--require-absent", action="store_true")
+    parser.add_argument("--require-public-project", action="store_true")
     args = parser.parse_args()
     candidate.check_evidence(args)
     manifest = candidate.verify(args)
@@ -197,6 +208,8 @@ def main():
         state = github(directory, manifest, os.environ["GITHUB_REPOSITORY"])
     elif args.destination == "modrinth":
         state = modrinth(manifest, args.project, directory)
+        if args.require_public_project:
+            require_public_modrinth_project(args.project)
     else:
         state = hangar(manifest, args.project, directory)
     if args.require_complete and state != "complete":

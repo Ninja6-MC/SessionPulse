@@ -170,9 +170,20 @@ def check_evidence(args):
             raise ValueError(f"Test evidence has mismatched {key}")
 
 
+def reconciliation_record(manifest, modrinth_project, hangar_project):
+    return {
+        key: manifest[key] for key in ("candidate_id", "source_sha", "tag", "version")
+    } | {"confirmed_absent": {"modrinth": modrinth_project, "hangar": hangar_project}}
+
+
+def show_reconciliation(args):
+    manifest = verify(args)
+    print(json.dumps(reconciliation_record(manifest, args.modrinth_project, args.hangar_project), indent=2))
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("create", "verify", "receipt", "evidence", "check-evidence"))
+    parser.add_argument("command", choices=("create", "verify", "receipt", "evidence", "check-evidence", "reconciliation"))
     parser.add_argument("--directory", required=True)
     parser.add_argument("--tag", required=True)
     parser.add_argument("--sha", required=True)
@@ -182,9 +193,12 @@ def main():
     parser.add_argument("--receipts")
     parser.add_argument("--evidence")
     parser.add_argument("--output")
+    parser.add_argument("--modrinth-project", default="sessionpulse")
+    parser.add_argument("--hangar-project", default="SessionPulse")
     args = parser.parse_args()
     {"create": create, "verify": verify, "receipt": receipt,
-     "evidence": evidence, "check-evidence": check_evidence}[args.command](args)
+     "evidence": evidence, "check-evidence": check_evidence,
+     "reconciliation": show_reconciliation}[args.command](args)
 
 
 if __name__ == "__main__":

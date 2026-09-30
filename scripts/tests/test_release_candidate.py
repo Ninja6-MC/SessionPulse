@@ -1,9 +1,11 @@
 import importlib.util
+import io
 import json
 import tempfile
 import unittest
 from argparse import Namespace
 from pathlib import Path
+from contextlib import redirect_stdout
 from zipfile import ZipFile
 
 
@@ -44,6 +46,22 @@ class ReleaseCandidateTest(unittest.TestCase):
         release_candidate.evidence(self.args)
         self.args.evidence = self.args.output
         release_candidate.check_evidence(self.args)
+
+    def test_reconciliation_summary_uses_verified_candidate_identity(self):
+        self.args.modrinth_project = "sessionpulse"
+        self.args.hangar_project = "SessionPulse"
+        output = io.StringIO()
+        with redirect_stdout(output):
+            release_candidate.show_reconciliation(self.args)
+        self.assertEqual(json.loads(output.getvalue()), {
+            "candidate_id": "52-1-aaaaaaaaaaaa", "source_sha": "a" * 40,
+            "tag": "v1.2.3-rc.1", "version": "1.2.3-rc.1",
+            "confirmed_absent": {"modrinth": "sessionpulse", "hangar": "SessionPulse"},
+        })
+        self.args.sha = "b" * 40
+        with redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(ValueError, "candidate_id"):
+                release_candidate.show_reconciliation(self.args)
 
     def test_rejects_changed_jar_and_extra_file(self):
         self.jar.write_bytes(self.jar.read_bytes() + b"changed")
