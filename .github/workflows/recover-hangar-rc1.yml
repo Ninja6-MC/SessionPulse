@@ -1,0 +1,171 @@
+name: Recover Hangar RC.1
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: release-refs/tags/v0.1.0-rc.1
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  CANDIDATE_RUN_ID: '36426966335'
+  CANDIDATE_ATTEMPT: '1'
+  RELEASE_TAG: v0.1.0-rc.1
+  SOURCE_SHA: ee50bfc3cf61abc23ac408cc4697c6e68473ec6e
+  JAR_SHA256: 10dcc7ba8dca139caba8ad4d23129d35da93d8b751457c310f3fd39f4c0f8637
+  VERSION: 0.1.0-rc.1
+  CHANNEL: Beta
+
+jobs:
+  prepare:
+    name: Verify retained candidate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require main dispatch
+        run: |
+          test "$GITHUB_REPOSITORY" = Ninja6-MC/SessionPulse
+          test "$GITHUB_REF" = refs/heads/main
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Verify original run and tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RUN="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID/attempts/$CANDIDATE_ATTEMPT" --jq '[.event, .head_branch, .head_sha, .path, .run_attempt] | @tsv')"
+          test "$RUN" = "$(printf 'push\t%s\t%s\t.github/workflows/release.yml\t1' "$RELEASE_TAG" "$SOURCE_SHA")"
+          test "$(git ls-remote origin "refs/tags/$RELEASE_TAG^{}")" = "$(printf '%s\trefs/tags/%s^{}' "$SOURCE_SHA" "$RELEASE_TAG")"
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$SOURCE_SHA" origin/main
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-candidate-36426966335-1
+          path: candidate
+          run-id: 36426966335
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-evidence-36426966335-1
+          path: .
+          run-id: 36426966335
+          github-token: ${{ github.token }}
+      - name: Verify retained bytes and smoke evidence
+        run: |
+          set -euo pipefail
+          python3 scripts/release-candidate.py check-evidence --directory candidate --evidence evidence.json --tag "$RELEASE_TAG" --sha "$SOURCE_SHA" --run-id "$CANDIDATE_RUN_ID" --attempt "$CANDIDATE_ATTEMPT"
+          echo "$JAR_SHA256  candidate/SessionPulse-$VERSION.jar" | sha256sum --check --status
+      - name: Verify existing GitHub pre-release downloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/release-destination.py github --directory candidate --evidence evidence.json --tag "$RELEASE_TAG" --sha "$SOURCE_SHA" --run-id "$CANDIDATE_RUN_ID" --attempt "$CANDIDATE_ATTEMPT" --require-complete
+      - name: Show Hangar owner inventory requirement
+        run: |
+          {
+            echo '## Hangar RC.1 recovery'
+            echo "Source: $RELEASE_TAG at $SOURCE_SHA; retained run $CANDIDATE_RUN_ID attempt $CANDIDATE_ATTEMPT; JAR SHA-256 $JAR_SHA256."
+            echo 'Target: Hangar Ninja6-MC/SessionPulse, Beta channel (or the release environment HANGAR_PROJECT override).'
+            echo 'Before approving the release environment, sign in as the Hangar project owner and inspect Versions and management views for 0.1.0-rc.1, including hidden, soft-deleted, and deleted-version views. Resolve any unavailable history view before attesting absence.'
+            echo 'Set release environment RELEASE_ABSENCE_RECONCILIATION to a candidate-bound JSON record confirming Hangar project SessionPulse absent. The existing release-candidate.py reconciliation command can print the record; keep only the Hangar confirmation if desired. On rerun, the same record remains the original inventory attestation and an already complete version is verified byte-for-byte.'
+            echo 'No Modrinth public access is required for this Hangar-only recovery.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    name: Approve and recover Hangar
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-candidate-36426966335-1
+          path: candidate
+          run-id: 36426966335
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-evidence-36426966335-1
+          path: .
+          run-id: 36426966335
+          github-token: ${{ github.token }}
+      - name: Revalidate source, candidate, evidence and inventory
+        env:
+          RELEASE_ABSENCE_RECONCILIATION: ${{ vars.RELEASE_ABSENCE_RECONCILIATION }}
+          PROJECT: ${{ vars.HANGAR_PROJECT || 'SessionPulse' }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test "$(git ls-remote origin "refs/tags/$RELEASE_TAG^{}")" = "$(printf '%s\trefs/tags/%s^{}' "$SOURCE_SHA" "$RELEASE_TAG")"
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$SOURCE_SHA" origin/main
+          python3 scripts/release-candidate.py check-evidence --directory candidate --evidence evidence.json --tag "$RELEASE_TAG" --sha "$SOURCE_SHA" --run-id "$CANDIDATE_RUN_ID" --attempt "$CANDIDATE_ATTEMPT"
+          echo "$JAR_SHA256  candidate/SessionPulse-$VERSION.jar" | sha256sum --check --status
+          python3 scripts/release-destination.py inventory --project "$PROJECT" --directory candidate --evidence evidence.json --tag "$RELEASE_TAG" --sha "$SOURCE_SHA" --run-id "$CANDIDATE_RUN_ID" --attempt "$CANDIDATE_ATTEMPT"
+      - name: Recheck existing GitHub pre-release downloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/release-destination.py github --directory candidate --evidence evidence.json --tag "$RELEASE_TAG" --sha "$SOURCE_SHA" --run-id "$CANDIDATE_RUN_ID" --attempt "$CANDIDATE_ATTEMPT" --require-complete
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          java-version: '21'
+          distribution: temurin
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - name: Require release environment key
+        env:
+          HANGAR_API_TOKEN: ${{ secrets.HANGAR_API_TOKEN }}
+          MIGRATED: ${{ vars.RELEASE_SECRETS_MIGRATED }}
+        run: |
+          test "$MIGRATED" = true
+          test -n "$HANGAR_API_TOKEN"
+      - name: Preflight Hangar project, channel and key
+        id: hangar
+        env:
+          RELEASE_ABSENCE_RECONCILIATION: ${{ vars.RELEASE_ABSENCE_RECONCILIATION }}
+          HANGAR_API_TOKEN: ${{ secrets.HANGAR_API_TOKEN }}
+          PROJECT: ${{ vars.HANGAR_PROJECT || 'SessionPulse' }}
+        run: python3 scripts/release-destination.py hangar --project "$PROJECT" --directory candidate --evidence evidence.json --tag "$RELEASE_TAG" --sha "$SOURCE_SHA" --run-id "$CANDIDATE_RUN_ID" --attempt "$CANDIDATE_ATTEMPT" --require-hangar-target --require-hangar-upload-access
+      - name: Validate Hangar task graph
+        if: steps.hangar.outputs.state == 'absent'
+        env:
+          PROJECT: ${{ vars.HANGAR_PROJECT || 'SessionPulse' }}
+        run: |
+          chmod +x ./gradlew
+          ./gradlew publishPluginPublicationToHangar --dry-run -PpluginVersion="$VERSION" -PhangarChannel="$CHANNEL" -PhangarProject="$PROJECT" -PreleaseJar="candidate/SessionPulse-$VERSION.jar" --no-daemon > task-graph.txt
+          cat task-graph.txt
+          python3 scripts/check-hangar-task-graph.py task-graph.txt
+      - name: Publish Hangar if absent
+        if: steps.hangar.outputs.state == 'absent'
+        env:
+          RELEASE_ABSENCE_RECONCILIATION: ${{ vars.RELEASE_ABSENCE_RECONCILIATION }}
+          HANGAR_API_TOKEN: ${{ secrets.HANGAR_API_TOKEN }}
+          PROJECT: ${{ vars.HANGAR_PROJECT || 'SessionPulse' }}
+        run: |
+          set -euo pipefail
+          python3 scripts/release-destination.py hangar --project "$PROJECT" --directory candidate --evidence evidence.json --tag "$RELEASE_TAG" --sha "$SOURCE_SHA" --run-id "$CANDIDATE_RUN_ID" --attempt "$CANDIDATE_ATTEMPT" --require-absent
+          mkdir -p build
+          cp candidate/release-notes.md build/release-notes.md
+          ./gradlew publishPluginPublicationToHangar -PpluginVersion="$VERSION" -PhangarChannel="$CHANNEL" -PhangarProject="$PROJECT" -PreleaseJar="candidate/SessionPulse-$VERSION.jar" --no-daemon
+          echo "$JAR_SHA256  candidate/SessionPulse-$VERSION.jar" | sha256sum --check --status
+      - name: Verify Hangar consumer download
+        env:
+          RELEASE_ABSENCE_RECONCILIATION: ${{ vars.RELEASE_ABSENCE_RECONCILIATION }}
+          HANGAR_API_TOKEN: ${{ secrets.HANGAR_API_TOKEN }}
+          PROJECT: ${{ vars.HANGAR_PROJECT || 'SessionPulse' }}
+        run: python3 scripts/release-destination.py hangar --project "$PROJECT" --directory candidate --evidence evidence.json --tag "$RELEASE_TAG" --sha "$SOURCE_SHA" --run-id "$CANDIDATE_RUN_ID" --attempt "$CANDIDATE_ATTEMPT" --require-complete
+      - name: Sync Hangar resource page
+        env:
+          HANGAR_API_TOKEN: ${{ secrets.HANGAR_API_TOKEN }}
+          PROJECT: ${{ vars.HANGAR_PROJECT || 'SessionPulse' }}
+        run: ./gradlew syncPluginPublicationMainResourcePagePageToHangar -PhangarProject="$PROJECT" --no-daemon

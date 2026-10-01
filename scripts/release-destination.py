@@ -257,7 +257,7 @@ def require_hangar_upload_access(project_id):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("destination", choices=("github", "modrinth", "hangar"))
+    parser.add_argument("destination", choices=("github", "modrinth", "hangar", "inventory"))
     parser.add_argument("--directory", required=True)
     parser.add_argument("--evidence", required=True)
     parser.add_argument("--tag", required=True)
@@ -277,7 +277,9 @@ def main():
     if tag_sha(args.tag) != manifest["source_sha"]:
         raise ValueError("Origin tag no longer points to candidate source commit")
     directory = Path(args.directory)
-    if args.destination == "github":
+    if args.destination == "inventory":
+        state = reconciled_absence(manifest, "hangar", args.project)
+    elif args.destination == "github":
         state = github(directory, manifest, os.environ["GITHUB_REPOSITORY"])
     elif args.destination == "modrinth":
         state = modrinth(manifest, args.project, directory)

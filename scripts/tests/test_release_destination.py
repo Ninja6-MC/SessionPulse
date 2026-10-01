@@ -87,6 +87,23 @@ class ReleaseDestinationTest(unittest.TestCase):
                 destination.main()
         github.assert_not_called()
 
+    @patch.object(destination, "tag_sha", return_value="a" * 40)
+    @patch.object(destination.candidate, "verify", return_value=MANIFEST)
+    @patch.object(destination.candidate, "check_evidence")
+    def test_recovery_inventory_requires_candidate_bound_hangar_attestation(self, check_evidence, verify, tag_sha):
+        args = ["release-destination.py", "inventory", "--project", "SessionPulse",
+                "--directory", str(self.directory), "--evidence", "evidence.json",
+                "--tag", MANIFEST["tag"], "--sha", MANIFEST["source_sha"],
+                "--run-id", "52", "--attempt", "1"]
+        with patch.object(destination.sys, "argv", args):
+            with patch.dict(destination.os.environ, {"RELEASE_ABSENCE_RECONCILIATION": json.dumps(
+                    self.absence_record("hangar", "other-project"))}):
+                with self.assertRaisesRegex(ValueError, "does not confirm hangar project SessionPulse"):
+                    destination.main()
+            with patch.dict(destination.os.environ, {"RELEASE_ABSENCE_RECONCILIATION": json.dumps(
+                    self.absence_record("hangar", "SessionPulse"))}):
+                destination.main()
+
     @patch.object(destination.subprocess, "run")
     def test_github_retry_verifies_downloads_and_rejects_changed_bytes(self, run):
         jar = "SessionPulse-1.2.3-rc.1.jar"
