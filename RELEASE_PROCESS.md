@@ -151,7 +151,8 @@ GitHub Actions (`.github/workflows/release.yml`) will:
     Before approval, inspect the verified candidate summary, which prints the
     candidate-specific reconciliation record, and complete the registry inventory audit
     described below. After approval, the publisher checks both registry destinations,
-    anonymous Modrinth project visibility, the Hangar task graph and the GitHub
+    anonymous Modrinth project visibility, the Hangar owner/project and selected
+    channel, the Hangar task graph and the GitHub
     destination before its first public write. No omitted public API result authorizes
     an upload by itself.
 11. Publish the unchanged jar to GitHub Releases, Modrinth and Paper Hangar in that

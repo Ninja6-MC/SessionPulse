@@ -165,6 +165,34 @@ class ReleaseDestinationTest(unittest.TestCase):
         destination.require_public_modrinth_project("sessionpulse")
         self.assertEqual(request.call_args.args[0], "https://api.modrinth.com/v2/project/sessionpulse")
 
+    @patch.object(destination, "request")
+    def test_hangar_target_requires_expected_project_and_channel(self, request):
+        manifest = {**MANIFEST, "hangar_channel": "Beta"}
+        project = {"id": 7083, "namespace": {"owner": "Ninja6-MC", "slug": "SessionPulse"},
+                   "visibility": "public"}
+        channels = [{"name": "Release", "projectId": 7083}, {"name": "Beta", "projectId": 7083}]
+        request.side_effect = [(200, project), (200, channels)]
+        destination.require_hangar_target(manifest, "SessionPulse", "Ninja6-MC")
+        self.assertEqual(request.call_args_list[0].args[0],
+                         "https://hangar.papermc.io/api/v1/projects/Ninja6-MC/SessionPulse")
+        self.assertEqual(request.call_args_list[1].args[0],
+                         "https://hangar.papermc.io/api/internal/channels/7083")
+        for invalid in (
+            (404, None),
+            (200, {**project, "namespace": {"owner": "Other", "slug": "SessionPulse"}}),
+            (200, {**project, "namespace": {"owner": "Ninja6-MC", "slug": "Other"}}),
+        ):
+            with self.subTest(project=invalid):
+                request.side_effect = [invalid]
+                with self.assertRaisesRegex(ValueError, "does not match"):
+                    destination.require_hangar_target(manifest, "SessionPulse", "Ninja6-MC")
+        for invalid_channels in ([{"name": "Release", "projectId": 7083}],
+                                 [{"name": "Beta", "projectId": 9999}]):
+            with self.subTest(channels=invalid_channels):
+                request.side_effect = [(200, project), (200, invalid_channels)]
+                with self.assertRaisesRegex(ValueError, "has no Beta channel"):
+                    destination.require_hangar_target(manifest, "SessionPulse", "Ninja6-MC")
+
     @patch.object(destination.urllib.request, "urlopen")
     @patch.object(destination, "request")
     def test_modrinth_matching_version_is_skipped(self, request, urlopen):

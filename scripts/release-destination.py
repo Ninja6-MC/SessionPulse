@@ -185,6 +185,25 @@ def hangar(manifest, project, directory):
     raise ValueError(f"Cannot inspect Hangar version (HTTP {status})")
 
 
+def require_hangar_target(manifest, project, owner):
+    project_url = "https://hangar.papermc.io/api/v1/projects/" + "/".join(
+        urllib.parse.quote(part, safe="") for part in (owner, project))
+    status, details = request(project_url)
+    namespace = details.get("namespace") if isinstance(details, dict) else None
+    project_id = details.get("id") if isinstance(details, dict) else None
+    if (status != 200 or not isinstance(namespace, dict)
+            or namespace.get("owner") != owner or namespace.get("slug") != project
+            or details.get("visibility") != "public"
+            or not isinstance(project_id, int) or isinstance(project_id, bool) or project_id <= 0):
+        raise ValueError(f"Hangar project {owner}/{project} is missing or does not match the public release target")
+    status, channels = request(f"https://hangar.papermc.io/api/internal/channels/{project_id}")
+    if status != 200 or not isinstance(channels, list):
+        raise ValueError(f"Cannot inspect Hangar channels for project {owner}/{project}")
+    if not any(isinstance(channel, dict) and channel.get("name") == manifest["hangar_channel"]
+               and channel.get("projectId") == project_id for channel in channels):
+        raise ValueError(f"Hangar project {owner}/{project} has no {manifest['hangar_channel']} channel")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("destination", choices=("github", "modrinth", "hangar"))
@@ -198,6 +217,7 @@ def main():
     parser.add_argument("--require-complete", action="store_true")
     parser.add_argument("--require-absent", action="store_true")
     parser.add_argument("--require-public-project", action="store_true")
+    parser.add_argument("--require-hangar-target", action="store_true")
     args = parser.parse_args()
     candidate.check_evidence(args)
     manifest = candidate.verify(args)
@@ -212,6 +232,8 @@ def main():
             require_public_modrinth_project(args.project)
     else:
         state = hangar(manifest, args.project, directory)
+        if args.require_hangar_target:
+            require_hangar_target(manifest, args.project, os.environ["GITHUB_REPOSITORY"].split("/")[0])
     if args.require_complete and state != "complete":
         raise ValueError(f"{args.destination} is not yet complete")
     if args.require_absent and state != "absent":
