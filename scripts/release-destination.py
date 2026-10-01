@@ -2,6 +2,8 @@
 """Fail-closed destination preflight for release promotion and retries."""
 
 import argparse
+import base64
+import binascii
 import hashlib
 import json
 import os
@@ -56,12 +58,15 @@ def tag_sha(tag):
 
 def reconciled_absence(manifest, destination, project):
     """Only a candidate-bound maintainer inventory audit can resolve uncertain absence."""
+    raw = os.environ.get("RELEASE_ABSENCE_RECONCILIATION", "")
+    if not raw.strip():
+        raise ValueError("Missing release environment RELEASE_ABSENCE_RECONCILIATION; audit the registry owner inventory and set the candidate record before approval")
     try:
-        record = json.loads(os.environ.get("RELEASE_ABSENCE_RECONCILIATION", "null"))
+        record = json.loads(raw)
     except ValueError:
-        raise ValueError("Release absence reconciliation is invalid JSON") from None
+        raise ValueError("RELEASE_ABSENCE_RECONCILIATION is malformed JSON") from None
     if not isinstance(record, dict):
-        raise ValueError(f"{destination} absence is uncertain; reconcile the owner inventory before upload")
+        raise ValueError("RELEASE_ABSENCE_RECONCILIATION must be a JSON object")
     for key in ("candidate_id", "tag", "version", "source_sha"):
         if record.get(key) != manifest.get(key):
             raise ValueError(f"Release absence reconciliation has mismatched {key}")
@@ -141,6 +146,42 @@ def modrinth(manifest, project, directory):
     return "complete"
 
 
+def require_public_modrinth_project(project):
+    url = f"https://api.modrinth.com/v2/project/{urllib.parse.quote(project, safe='')}"
+    status, public_project = request(url)
+    if status != 200 or not isinstance(public_project, dict) or not public_project.get("id"):
+        raise ValueError("Modrinth project is not anonymously accessible; resolve project review before publication")
+
+
+def require_modrinth_upload_access(project):
+    token = os.environ["MODRINTH_TOKEN"]
+    headers = {"Authorization": token}
+    try:
+        user_status, user = request("https://api.modrinth.com/v2/user", headers)
+        project_url = f"https://api.modrinth.com/v2/project/{urllib.parse.quote(project, safe='')}"
+        project_status, details = request(project_url, headers)
+        if user_status != 200 or not isinstance(user, dict) or not user.get("id"):
+            raise ValueError("Cannot identify Modrinth release token owner")
+        if (project_status != 200 or not isinstance(details, dict)
+                or project not in (details.get("slug"), details.get("id"))):
+            raise ValueError(f"Modrinth release target {project} does not match the authenticated project")
+        members_status, members = request(project_url + "/members", headers)
+    except urllib.error.HTTPError as error:
+        if error.code in (401, 403):
+            raise ValueError("Modrinth release token needs USER_READ and PROJECT_READ scopes for upload-access preflight") from None
+        raise
+    if members_status != 200 or not isinstance(members, list):
+        raise ValueError(f"Cannot inspect Modrinth project {project} members")
+    for member in members:
+        if (isinstance(member, dict) and isinstance(member.get("user"), dict)
+                and member["user"].get("id") == user["id"] and member.get("accepted") is True
+                and isinstance(member.get("permissions"), int)
+                and not isinstance(member["permissions"], bool)
+                and member["permissions"] & 1):
+            return
+    raise ValueError(f"Modrinth release token owner lacks accepted upload permission on project {project}")
+
+
 def hangar(manifest, project, directory):
     headers = hangar_session()
     url = f"https://hangar.papermc.io/api/v1/projects/{urllib.parse.quote(project, safe='')}/versions/{urllib.parse.quote(manifest['version'], safe='')}"
@@ -175,6 +216,45 @@ def hangar(manifest, project, directory):
     raise ValueError(f"Cannot inspect Hangar version (HTTP {status})")
 
 
+def require_hangar_target(manifest, project, owner):
+    project_url = "https://hangar.papermc.io/api/v1/projects/" + "/".join(
+        urllib.parse.quote(part, safe="") for part in (owner, project))
+    status, details = request(project_url)
+    namespace = details.get("namespace") if isinstance(details, dict) else None
+    project_id = details.get("id") if isinstance(details, dict) else None
+    if (status != 200 or not isinstance(namespace, dict)
+            or namespace.get("owner") != owner or namespace.get("slug") != project
+            or details.get("visibility") != "public"
+            or not isinstance(project_id, int) or isinstance(project_id, bool) or project_id <= 0):
+        raise ValueError(f"Hangar project {owner}/{project} is missing or does not match the public release target")
+    status, channels = request(f"https://hangar.papermc.io/api/internal/channels/{project_id}")
+    if status != 200 or not isinstance(channels, list):
+        raise ValueError(f"Cannot inspect Hangar channels for project {owner}/{project}")
+    if not any(isinstance(channel, dict) and channel.get("name") == manifest["hangar_channel"]
+               and channel.get("projectId") == project_id for channel in channels):
+        raise ValueError(f"Hangar project {owner}/{project} has no {manifest['hangar_channel']} channel")
+    return project_id
+
+
+def require_hangar_upload_access(project_id):
+    session = hangar_session()
+    try:
+        jwt = session["Authorization"].split(" ", 1)[1]
+        payload = jwt.split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        key_permissions = int(claims["permissions"], 2)
+    except (binascii.Error, KeyError, IndexError, ValueError):
+        raise ValueError("Cannot inspect Hangar release token permissions") from None
+    required = (1 << 9) | (1 << 12)  # edit_page and create_version
+    if key_permissions & required != required:
+        raise ValueError("Hangar release token needs create_version and edit_page permissions")
+    query = urllib.parse.urlencode({"project": project_id,
+                                    "permissions": ["create_version", "edit_page"]}, doseq=True)
+    status, result = request("https://hangar.papermc.io/api/v1/permissions/hasAll?" + query, session)
+    if status != 200 or not isinstance(result, dict) or result.get("result") is not True:
+        raise ValueError(f"Hangar release token owner lacks create_version or edit_page on project {project_id}")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("destination", choices=("github", "modrinth", "hangar"))
@@ -187,6 +267,10 @@ def main():
     parser.add_argument("--project")
     parser.add_argument("--require-complete", action="store_true")
     parser.add_argument("--require-absent", action="store_true")
+    parser.add_argument("--require-public-project", action="store_true")
+    parser.add_argument("--require-modrinth-upload-access", action="store_true")
+    parser.add_argument("--require-hangar-target", action="store_true")
+    parser.add_argument("--require-hangar-upload-access", action="store_true")
     args = parser.parse_args()
     candidate.check_evidence(args)
     manifest = candidate.verify(args)
@@ -197,8 +281,16 @@ def main():
         state = github(directory, manifest, os.environ["GITHUB_REPOSITORY"])
     elif args.destination == "modrinth":
         state = modrinth(manifest, args.project, directory)
+        if args.require_public_project:
+            require_public_modrinth_project(args.project)
+        if args.require_modrinth_upload_access:
+            require_modrinth_upload_access(args.project)
     else:
         state = hangar(manifest, args.project, directory)
+        if args.require_hangar_target:
+            project_id = require_hangar_target(manifest, args.project, os.environ["GITHUB_REPOSITORY"].split("/")[0])
+            if args.require_hangar_upload_access:
+                require_hangar_upload_access(project_id)
     if args.require_complete and state != "complete":
         raise ValueError(f"{args.destination} is not yet complete")
     if args.require_absent and state != "absent":

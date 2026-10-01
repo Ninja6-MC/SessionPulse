@@ -148,8 +148,12 @@ GitHub Actions (`.github/workflows/release.yml`) will:
     and checks the retained candidate and evidence, and resolves the tag on `origin`
     before every destination. A moved tag, expired artifact, failed test record or
     changed byte stops publication.
-    Before approval, inspect the verified candidate summary and complete registry
-    absence reconciliation as described below. No omitted public API result authorizes
+    Before approval, inspect the verified candidate summary, which prints the
+    candidate-specific reconciliation record, and complete the registry inventory audit
+    described below. After approval, the publisher checks both registry destinations,
+    anonymous Modrinth project visibility, the Hangar owner/project and selected
+    channel, the Hangar task graph and the GitHub
+    destination before its first public write. No omitted public API result authorizes
     an upload by itself.
 11. Publish the unchanged jar to GitHub Releases, Modrinth and Paper Hangar in that
     order. Pre-releases retain their tier; only stable tags become GitHub Latest. Both
@@ -173,8 +177,15 @@ registry secrets. Never approve a deployment from automation.
 
 | Environment secret | Used by | Required scope |
 | :--- | :--- | :--- |
-| `MODRINTH_TOKEN` | Modrinth lookup and upload | Read projects and versions; create versions on the SessionPulse project |
+| `MODRINTH_TOKEN` | Modrinth lookup and upload | `USER_READ` and `PROJECT_READ` for the read-only owner/project preflight, plus `VERSION_CREATE` for upload; token owner must have accepted upload permission on SessionPulse |
 | `HANGAR_API_TOKEN` | Hangar lookup, version upload and page sync | Key covering SessionPulse, owned by a project member, with `create_version`, `edit_page` |
+
+Before the first public write, preflight verifies the Modrinth token owner and their
+project upload permission, and checks both Hangar API-key permission bits and the
+owner's project permissions. A Modrinth PAT's `VERSION_CREATE` scope has no supported
+read-only introspection endpoint; the actual upload remains the definitive test.
+Rotate an existing Modrinth PAT if it lacks the new read scopes, while retaining
+`VERSION_CREATE`. Do not use a write probe to test that scope.
 
 A Hangar API key holding only `create_version` still uploads the version, but Hangar
 rejects the page sync that follows. That fails the job whenever the page text changed;
@@ -239,7 +250,9 @@ candidate's manifest and only the audited destinations, then approve that candid
 ```
 
 Use the configured project IDs or slugs if their repository variables differ from
-the defaults. This record is rejected for a different candidate, tag, version,
+the defaults. The evidence summary prints the resolved repository variables; if the
+release environment overrides either project slug, replace that value in the record.
+The record is rejected for a different candidate, tag, version,
 source commit, project or destination. Replace it for each new candidate; it cannot
 authorize a rebuild or a new run's candidate. Re-runs of the publisher retain the
 same candidate and require approval again. Matching existing destinations are

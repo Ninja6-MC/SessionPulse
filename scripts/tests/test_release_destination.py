@@ -1,4 +1,5 @@
 import importlib.util
+import base64
 import hashlib
 import io
 import json
@@ -128,7 +129,7 @@ class ReleaseDestinationTest(unittest.TestCase):
     @patch.object(destination, "request")
     def test_modrinth_omitted_draft_is_uncertain_without_reconciliation(self, request):
         request.return_value = (200, [{"version_number": "1.2.2"}])
-        with self.assertRaisesRegex(ValueError, "absence is uncertain"):
+        with self.assertRaisesRegex(ValueError, "Missing release environment RELEASE_ABSENCE_RECONCILIATION"):
             destination.modrinth(MANIFEST, "sessionpulse", self.directory)
         with patch.dict(destination.os.environ, {"RELEASE_ABSENCE_RECONCILIATION": json.dumps(self.absence_record())}):
             self.assertEqual(destination.modrinth(MANIFEST, "sessionpulse", self.directory), "absent")
@@ -145,6 +146,100 @@ class ReleaseDestinationTest(unittest.TestCase):
                 destination.reconciled_absence(MANIFEST, "hangar", "SessionPulse")
             with self.assertRaisesRegex(ValueError, "does not confirm"):
                 destination.reconciled_absence(MANIFEST, "modrinth", "different-project")
+
+    def test_reconciliation_missing_malformed_and_matching(self):
+        with patch.dict(destination.os.environ, {"RELEASE_ABSENCE_RECONCILIATION": ""}):
+            with self.assertRaisesRegex(ValueError, "Missing release environment RELEASE_ABSENCE_RECONCILIATION"):
+                destination.reconciled_absence(MANIFEST, "modrinth", "sessionpulse")
+        with patch.dict(destination.os.environ, {"RELEASE_ABSENCE_RECONCILIATION": "{"}):
+            with self.assertRaisesRegex(ValueError, "malformed JSON"):
+                destination.reconciled_absence(MANIFEST, "modrinth", "sessionpulse")
+        with patch.dict(destination.os.environ, {"RELEASE_ABSENCE_RECONCILIATION": json.dumps(self.absence_record())}):
+            self.assertEqual(destination.reconciled_absence(MANIFEST, "modrinth", "sessionpulse"), "absent")
+
+    @patch.object(destination, "request")
+    def test_preflight_requires_anonymous_modrinth_project(self, request):
+        request.return_value = (404, None)
+        with self.assertRaisesRegex(ValueError, "not anonymously accessible"):
+            destination.require_public_modrinth_project("sessionpulse")
+        request.return_value = (200, {"id": "project-id"})
+        destination.require_public_modrinth_project("sessionpulse")
+        self.assertEqual(request.call_args.args[0], "https://api.modrinth.com/v2/project/sessionpulse")
+
+    @patch.object(destination, "request")
+    def test_modrinth_upload_access_requires_owner_and_project_permission(self, request):
+        project = {"id": "project-id", "slug": "sessionpulse"}
+        member = {"user": {"id": "owner-id"}, "accepted": True, "permissions": 1}
+        request.side_effect = [(200, {"id": "owner-id"}), (200, project), (200, [member])]
+        destination.require_modrinth_upload_access("sessionpulse")
+        self.assertEqual(request.call_args_list[2].args[0],
+                         "https://api.modrinth.com/v2/project/sessionpulse/members")
+        for bad_member in ({**member, "permissions": 0}, {**member, "accepted": False},
+                           {**member, "user": {"id": "someone-else"}}):
+            with self.subTest(member=bad_member):
+                request.side_effect = [(200, {"id": "owner-id"}), (200, project), (200, [bad_member])]
+                with self.assertRaisesRegex(ValueError, "lacks accepted upload permission"):
+                    destination.require_modrinth_upload_access("sessionpulse")
+        request.side_effect = [(200, {"id": "owner-id"}), (200, {**project, "slug": "wrong"})]
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            destination.require_modrinth_upload_access("sessionpulse")
+
+    @patch.object(destination, "request")
+    def test_modrinth_upload_access_reports_missing_read_scopes(self, request):
+        request.side_effect = destination.urllib.error.HTTPError("https://api.modrinth.com/v2/user", 401,
+                                                                  "Unauthorized", {}, None)
+        with self.assertRaisesRegex(ValueError, "USER_READ and PROJECT_READ"):
+            destination.require_modrinth_upload_access("sessionpulse")
+
+    @patch.object(destination, "request")
+    def test_hangar_target_requires_expected_project_and_channel(self, request):
+        manifest = {**MANIFEST, "hangar_channel": "Beta"}
+        project = {"id": 7083, "namespace": {"owner": "Ninja6-MC", "slug": "SessionPulse"},
+                   "visibility": "public"}
+        channels = [{"name": "Release", "projectId": 7083}, {"name": "Beta", "projectId": 7083}]
+        request.side_effect = [(200, project), (200, channels)]
+        self.assertEqual(destination.require_hangar_target(manifest, "SessionPulse", "Ninja6-MC"), 7083)
+        self.assertEqual(request.call_args_list[0].args[0],
+                         "https://hangar.papermc.io/api/v1/projects/Ninja6-MC/SessionPulse")
+        self.assertEqual(request.call_args_list[1].args[0],
+                         "https://hangar.papermc.io/api/internal/channels/7083")
+        for invalid in (
+            (404, None),
+            (200, {**project, "namespace": {"owner": "Other", "slug": "SessionPulse"}}),
+            (200, {**project, "namespace": {"owner": "Ninja6-MC", "slug": "Other"}}),
+        ):
+            with self.subTest(project=invalid):
+                request.side_effect = [invalid]
+                with self.assertRaisesRegex(ValueError, "does not match"):
+                    destination.require_hangar_target(manifest, "SessionPulse", "Ninja6-MC")
+        for invalid_channels in ([{"name": "Release", "projectId": 7083}],
+                                 [{"name": "Beta", "projectId": 9999}]):
+            with self.subTest(channels=invalid_channels):
+                request.side_effect = [(200, project), (200, invalid_channels)]
+                with self.assertRaisesRegex(ValueError, "has no Beta channel"):
+                    destination.require_hangar_target(manifest, "SessionPulse", "Ninja6-MC")
+
+    @patch.object(destination, "request")
+    def test_hangar_upload_access_checks_key_bits_and_project_permissions(self, request):
+        def session(bits):
+            payload = base64.urlsafe_b64encode(json.dumps({"permissions": bin(bits)[2:]}).encode()).decode().rstrip("=")
+            return {"Authorization": "HangarAuth header." + payload + ".signature"}
+
+        both = (1 << 9) | (1 << 12)
+        with patch.object(destination, "hangar_session", return_value=session(both)):
+            request.return_value = (200, {"result": True})
+            destination.require_hangar_upload_access(7083)
+            self.assertIn("project=7083", request.call_args.args[0])
+            self.assertIn("permissions=create_version", request.call_args.args[0])
+            self.assertIn("permissions=edit_page", request.call_args.args[0])
+            request.return_value = (200, {"result": False})
+            with self.assertRaisesRegex(ValueError, "owner lacks"):
+                destination.require_hangar_upload_access(7083)
+        with patch.object(destination, "hangar_session", return_value=session(1 << 12)):
+            request.reset_mock()
+            with self.assertRaisesRegex(ValueError, "needs create_version and edit_page"):
+                destination.require_hangar_upload_access(7083)
+            request.assert_not_called()
 
     @patch.object(destination.urllib.request, "urlopen")
     @patch.object(destination, "request")
@@ -175,7 +270,7 @@ class ReleaseDestinationTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "conflicts"):
             destination.hangar({**MANIFEST, "hangar_channel": "Beta"}, "SessionPulse", self.directory)
         request.return_value = (404, None)
-        with self.assertRaisesRegex(ValueError, "absence is uncertain"):
+        with self.assertRaisesRegex(ValueError, "Missing release environment RELEASE_ABSENCE_RECONCILIATION"):
             destination.hangar({**MANIFEST, "hangar_channel": "Beta"}, "SessionPulse", self.directory)
         with patch.dict(destination.os.environ, {"RELEASE_ABSENCE_RECONCILIATION": json.dumps(self.absence_record("hangar", "SessionPulse"))}):
             self.assertEqual(destination.hangar({**MANIFEST, "hangar_channel": "Beta"}, "SessionPulse", self.directory), "absent")
