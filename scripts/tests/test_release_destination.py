@@ -1,4 +1,5 @@
 import importlib.util
+import base64
 import hashlib
 import io
 import json
@@ -166,13 +167,38 @@ class ReleaseDestinationTest(unittest.TestCase):
         self.assertEqual(request.call_args.args[0], "https://api.modrinth.com/v2/project/sessionpulse")
 
     @patch.object(destination, "request")
+    def test_modrinth_upload_access_requires_owner_and_project_permission(self, request):
+        project = {"id": "project-id", "slug": "sessionpulse"}
+        member = {"user": {"id": "owner-id"}, "accepted": True, "permissions": 1}
+        request.side_effect = [(200, {"id": "owner-id"}), (200, project), (200, [member])]
+        destination.require_modrinth_upload_access("sessionpulse")
+        self.assertEqual(request.call_args_list[2].args[0],
+                         "https://api.modrinth.com/v2/project/sessionpulse/members")
+        for bad_member in ({**member, "permissions": 0}, {**member, "accepted": False},
+                           {**member, "user": {"id": "someone-else"}}):
+            with self.subTest(member=bad_member):
+                request.side_effect = [(200, {"id": "owner-id"}), (200, project), (200, [bad_member])]
+                with self.assertRaisesRegex(ValueError, "lacks accepted upload permission"):
+                    destination.require_modrinth_upload_access("sessionpulse")
+        request.side_effect = [(200, {"id": "owner-id"}), (200, {**project, "slug": "wrong"})]
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            destination.require_modrinth_upload_access("sessionpulse")
+
+    @patch.object(destination, "request")
+    def test_modrinth_upload_access_reports_missing_read_scopes(self, request):
+        request.side_effect = destination.urllib.error.HTTPError("https://api.modrinth.com/v2/user", 401,
+                                                                  "Unauthorized", {}, None)
+        with self.assertRaisesRegex(ValueError, "USER_READ and PROJECT_READ"):
+            destination.require_modrinth_upload_access("sessionpulse")
+
+    @patch.object(destination, "request")
     def test_hangar_target_requires_expected_project_and_channel(self, request):
         manifest = {**MANIFEST, "hangar_channel": "Beta"}
         project = {"id": 7083, "namespace": {"owner": "Ninja6-MC", "slug": "SessionPulse"},
                    "visibility": "public"}
         channels = [{"name": "Release", "projectId": 7083}, {"name": "Beta", "projectId": 7083}]
         request.side_effect = [(200, project), (200, channels)]
-        destination.require_hangar_target(manifest, "SessionPulse", "Ninja6-MC")
+        self.assertEqual(destination.require_hangar_target(manifest, "SessionPulse", "Ninja6-MC"), 7083)
         self.assertEqual(request.call_args_list[0].args[0],
                          "https://hangar.papermc.io/api/v1/projects/Ninja6-MC/SessionPulse")
         self.assertEqual(request.call_args_list[1].args[0],
@@ -192,6 +218,28 @@ class ReleaseDestinationTest(unittest.TestCase):
                 request.side_effect = [(200, project), (200, invalid_channels)]
                 with self.assertRaisesRegex(ValueError, "has no Beta channel"):
                     destination.require_hangar_target(manifest, "SessionPulse", "Ninja6-MC")
+
+    @patch.object(destination, "request")
+    def test_hangar_upload_access_checks_key_bits_and_project_permissions(self, request):
+        def session(bits):
+            payload = base64.urlsafe_b64encode(json.dumps({"permissions": bin(bits)[2:]}).encode()).decode().rstrip("=")
+            return {"Authorization": "HangarAuth header." + payload + ".signature"}
+
+        both = (1 << 9) | (1 << 12)
+        with patch.object(destination, "hangar_session", return_value=session(both)):
+            request.return_value = (200, {"result": True})
+            destination.require_hangar_upload_access(7083)
+            self.assertIn("project=7083", request.call_args.args[0])
+            self.assertIn("permissions=create_version", request.call_args.args[0])
+            self.assertIn("permissions=edit_page", request.call_args.args[0])
+            request.return_value = (200, {"result": False})
+            with self.assertRaisesRegex(ValueError, "owner lacks"):
+                destination.require_hangar_upload_access(7083)
+        with patch.object(destination, "hangar_session", return_value=session(1 << 12)):
+            request.reset_mock()
+            with self.assertRaisesRegex(ValueError, "needs create_version and edit_page"):
+                destination.require_hangar_upload_access(7083)
+            request.assert_not_called()
 
     @patch.object(destination.urllib.request, "urlopen")
     @patch.object(destination, "request")

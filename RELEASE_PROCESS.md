@@ -177,8 +177,15 @@ registry secrets. Never approve a deployment from automation.
 
 | Environment secret | Used by | Required scope |
 | :--- | :--- | :--- |
-| `MODRINTH_TOKEN` | Modrinth lookup and upload | Read projects and versions; create versions on the SessionPulse project |
+| `MODRINTH_TOKEN` | Modrinth lookup and upload | `USER_READ` and `PROJECT_READ` for the read-only owner/project preflight, plus `VERSION_CREATE` for upload; token owner must have accepted upload permission on SessionPulse |
 | `HANGAR_API_TOKEN` | Hangar lookup, version upload and page sync | Key covering SessionPulse, owned by a project member, with `create_version`, `edit_page` |
+
+Before the first public write, preflight verifies the Modrinth token owner and their
+project upload permission, and checks both Hangar API-key permission bits and the
+owner's project permissions. A Modrinth PAT's `VERSION_CREATE` scope has no supported
+read-only introspection endpoint; the actual upload remains the definitive test.
+Rotate an existing Modrinth PAT if it lacks the new read scopes, while retaining
+`VERSION_CREATE`. Do not use a write probe to test that scope.
 
 A Hangar API key holding only `create_version` still uploads the version, but Hangar
 rejects the page sync that follows. That fails the job whenever the page text changed;

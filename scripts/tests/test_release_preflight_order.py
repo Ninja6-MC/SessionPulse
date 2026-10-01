@@ -19,7 +19,9 @@ class ReleasePreflightOrderTest(unittest.TestCase):
         ):
             self.assertLess(publish.index(f"      - name: {step}"), first_write, step)
         self.assertIn("--require-public-project", publish[:first_write])
+        self.assertIn("--require-modrinth-upload-access", publish[:first_write])
         self.assertIn("--require-hangar-target", publish[:first_write])
+        self.assertIn("--require-hangar-upload-access", publish[:first_write])
         self.assertLess(first_write, publish.index("      - name: Publish Modrinth if absent"))
         self.assertLess(first_write, publish.index("      - name: Publish Hangar if absent"))
 
