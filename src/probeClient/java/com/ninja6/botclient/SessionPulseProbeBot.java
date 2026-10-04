@@ -20,7 +20,6 @@ import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.level.Clien
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.title.ClientboundSetActionBarTextPacket;
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.title.ClientboundSetSubtitleTextPacket;
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.title.ClientboundSetTitleTextPacket;
-import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.level.ServerboundAcceptTeleportationPacket;
 import org.geysermc.mcprotocollib.protocol.packet.login.clientbound.ClientboundLoginDisconnectPacket;
 
 import java.util.concurrent.CountDownLatch;
@@ -93,7 +92,7 @@ public final class SessionPulseProbeBot {
                     inGame.set(true);
                     report("joined");
                 } else if (packet instanceof ClientboundPlayerPositionPacket pos) {
-                    s.send(new ServerboundAcceptTeleportationPacket(pos.getId()));
+                    s.send(TeleportAcknowledgement.packet(pos));
                 } else if (packet instanceof ClientboundSystemChatPacket chat) {
                     // overlay=true is the legacy action-bar route. It is logged so a change in
                     // how the server routes the action bar is visible, but the script only
