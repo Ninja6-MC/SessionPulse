@@ -149,6 +149,8 @@ MAX_PLAYERS=1
 [[ -z "$BOT_JAR" ]] || MAX_PLAYERS=5
 cat > server.properties <<PROPS
 online-mode=false
+white-list=false
+enforce-whitelist=false
 server-ip=127.0.0.1
 server-port=25565
 level-type=minecraft\\:flat
