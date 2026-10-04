@@ -114,7 +114,7 @@ jobs:
           retention-days: 30
 
   smoke:
-    name: Candidate Smoke (${{ matrix.platform }})
+    name: Candidate Smoke (${{ matrix.label }})
     needs: candidate
     env:
       CANDIDATE_ATTEMPT: ${{ needs.candidate.outputs.attempt }}
@@ -123,7 +123,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [paper, folia, spigot]
+        include:
+          - {label: paper, platform: paper, minecraft: '1.21.11', java: '21', fixture: botClientJar, bot: SessionPulseProbeBot}
+          - {label: folia, platform: folia, minecraft: '1.21.11', java: '21', fixture: botClientJar, bot: SessionPulseProbeBot}
+          - {label: spigot, platform: spigot, minecraft: '1.21.11', java: '21', fixture: botClientJar, bot: SessionPulseProbeBot}
+          - {label: 'paper 26.3', platform: paper, minecraft: '26.3', java: '25', fixture: botClient26Jar, bot: SessionPulseProbeBot26, server_build: '147'}
+          - {label: 'spigot 26.3', platform: spigot, minecraft: '26.3', java: '25', fixture: botClient26Jar, bot: SessionPulseProbeBot26}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -146,7 +151,12 @@ jobs:
       - name: Build protocol test fixture
         run: |
           chmod +x ./gradlew
-          ./gradlew botClientJar --no-daemon
+          ./gradlew ${{ matrix.fixture }} --no-daemon
+      - name: Set up server runtime
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          java-version: ${{ matrix.java }}
+          distribution: temurin
       - name: Build Spigot test server
         if: matrix.platform == 'spigot'
         run: |
@@ -154,37 +164,39 @@ jobs:
           mkdir -p "$RUNNER_TEMP/buildtools" "$RUNNER_TEMP/spigot-jar"
           cd "$RUNNER_TEMP/buildtools"
           curl -fsSL --retry 3 --retry-delay 5 -o BuildTools.jar 'https://hub.spigotmc.org/jenkins/job/BuildTools/lastSuccessfulBuild/artifact/target/BuildTools.jar'
-          java -jar BuildTools.jar --rev 1.21.11 --compile SPIGOT --output-dir "$RUNNER_TEMP/spigot-jar" --final-name spigot-1.21.11.jar
+          java -jar BuildTools.jar --rev "${{ matrix.minecraft }}" --compile SPIGOT --output-dir "$RUNNER_TEMP/spigot-jar" --final-name "spigot-${{ matrix.minecraft }}.jar"
       - name: Exercise downloaded JAR
         env:
           VERSION: ${{ needs.candidate.outputs.version }}
           PLATFORM: ${{ matrix.platform }}
-          SPIGOT_JAR: ${{ runner.temp }}/spigot-jar/spigot-1.21.11.jar
-          BOT_JAR: build/test-fixtures/SessionPulseProbeBot.jar
+          SPIGOT_JAR: ${{ runner.temp }}/spigot-jar/spigot-${{ matrix.minecraft }}.jar
+          BOT_JAR: build/test-fixtures/${{ matrix.bot }}.jar
+          SERVER_BUILD: ${{ matrix.server_build }}
         run: |
           set -euo pipefail
           chmod +x .github/scripts/smoke-test.sh
-          .github/scripts/smoke-test.sh "$PLATFORM" 1.21.11 "candidate/SessionPulse-$VERSION.jar"
+          .github/scripts/smoke-test.sh "$PLATFORM" "${{ matrix.minecraft }}" "candidate/SessionPulse-$VERSION.jar"
       - name: Record passing smoke evidence
         env:
           SHA: ${{ needs.candidate.outputs.sha }}
           PLATFORM: ${{ matrix.platform }}
-        run: python3 scripts/release-candidate.py receipt --directory candidate --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT" --platform "$PLATFORM" --output "smoke-$PLATFORM.json"
+        run: python3 scripts/release-candidate.py receipt --directory candidate --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT" --platform "$PLATFORM" --smoke-evidence "run-$PLATFORM/evidence.json" --output "smoke-$PLATFORM-${{ matrix.minecraft }}.json"
       - name: Retain smoke receipt
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: smoke-${{ matrix.platform }}-${{ github.run_id }}-${{ needs.candidate.outputs.attempt }}
-          path: smoke-${{ matrix.platform }}.json
+          name: smoke-${{ matrix.platform }}-${{ matrix.minecraft }}-${{ github.run_id }}-${{ needs.candidate.outputs.attempt }}
+          path: smoke-${{ matrix.platform }}-${{ matrix.minecraft }}.json
           if-no-files-found: error
           retention-days: 30
       - name: Retain smoke logs
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: release-log-${{ matrix.platform }}-${{ github.run_id }}-${{ needs.candidate.outputs.attempt }}
+          name: release-log-${{ matrix.platform }}-${{ matrix.minecraft }}-${{ github.run_id }}-${{ needs.candidate.outputs.attempt }}
           path: |
             run-${{ matrix.platform }}/server.log
             run-${{ matrix.platform }}/bot-*.log
+            run-${{ matrix.platform }}/evidence.json
           if-no-files-found: warn
           retention-days: 30
 

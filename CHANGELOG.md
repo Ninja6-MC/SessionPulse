@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Separate Minecraft 26.3 protocol fixture and Paper/Spigot gameplay checks on Java 25.
+- Release evidence tied to the tested candidate, server, runtime and fixture digests.
+
 ## [0.1.0]
 
 ### Added

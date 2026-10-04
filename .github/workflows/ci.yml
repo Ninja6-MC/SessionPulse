@@ -205,17 +205,10 @@ jobs:
         # "1.21" and "26.1" are API bucket keys rather than versions and cannot be used
         # here.
         #
-        # No 26.x leg in this issue. Minecraft 26.1 and newer refuse to boot below Java
-        # 25, and adventure-platform-bukkit 4.4.1 predates them - it is expected to fall
-        # back to a legacy facet there rather than fail, which degrades MiniMessage output
-        # rather than breaking the boot. That is a real limitation of the four-platform
-        # claim on the newest servers, it needs measuring rather than guessing, and it
-        # belongs to the compatibility issues.
-        #
-        # `bot: true` turns a leg into the gameplay smoke test: a protocol client joins and
-        # the script asserts the milestone, the kick and the cooldown from what it received.
-        # Only the 1.21.11 legs, because MCProtocolLib is pinned to that one protocol; the
-        # 1.20.4 legs stay boot-only, which is also what keeps their shipped-config checks.
+        # 26.3 uses a separate protocol fixture, preserving the older client's classpath.
+        # Paper build 147 is pinned. Spigot is compiled with BuildTools for --rev 26.3;
+        # its exact server digest and BuildTools build are retained with the smoke evidence.
+        # Folia 26.3 is not published yet; latest-server discovery remains boot-only.
         # The labels are the check names and must not change - see N6-CI-03 above.
         include:
           - label: 'paper 1.20.4'
@@ -242,6 +235,17 @@ jobs:
             platform: spigot
             minecraft: '1.21.11'
             java: '21'
+            bot: true
+          - label: 'paper 26.3'
+            platform: paper
+            minecraft: '26.3'
+            java: '25'
+            bot: true
+            server_build: '147'
+          - label: 'spigot 26.3'
+            platform: spigot
+            minecraft: '26.3'
+            java: '25'
             bot: true
 
     steps:
@@ -289,7 +293,7 @@ jobs:
         if: matrix.bot
         run: |
           chmod +x ./gradlew
-          ./gradlew botClientJar --no-daemon
+          ./gradlew ${{ matrix.minecraft == '26.3' && 'botClient26Jar' || 'botClientJar' }} --no-daemon
 
       # `java` here is the version the SERVER runs on, not the one the plugin is built
       # with. The jar stays Java 21 bytecode, which a newer runtime accepts.
@@ -385,6 +389,7 @@ jobs:
         env:
           SPIGOT_JAR: ${{ matrix.platform == 'spigot' && format('{0}/spigot-jar/spigot-{1}.jar', runner.temp, matrix.minecraft) || '' }}
           BUILDTOOLS_BUILD: ${{ steps.buildtools.outputs.build }}
+          SERVER_BUILD: ${{ matrix.server_build }}
         run: |
           chmod +x .github/scripts/smoke-test.sh
           # The upload step's denylist already excludes the thin, sources and javadoc
@@ -404,7 +409,7 @@ jobs:
           # the plugin jar above: an empty BOT_JAR would silently turn a bot leg back into
           # a boot-only leg that still reports green.
           if [ "${{ matrix.bot }}" = "true" ]; then
-            BOT_JAR="build/test-fixtures/SessionPulseProbeBot.jar"
+            BOT_JAR="build/test-fixtures/${{ matrix.minecraft == '26.3' && 'SessionPulseProbeBot26' || 'SessionPulseProbeBot' }}.jar"
             if [ ! -f "$BOT_JAR" ]; then
               echo "::error::The bot fixture was not built at $BOT_JAR."
               exit 1
@@ -424,5 +429,6 @@ jobs:
           path: |
             run-${{ matrix.platform }}/server.log
             run-${{ matrix.platform }}/bot-*.log
+            run-${{ matrix.platform }}/evidence.json
           retention-days: 7
           if-no-files-found: warn

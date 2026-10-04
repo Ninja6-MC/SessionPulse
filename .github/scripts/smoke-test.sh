@@ -19,7 +19,7 @@
 # is unchanged for the legs that do not set BOT_JAR.
 #
 # With BOT_JAR: the jar is build/test-fixtures/SessionPulseProbeBot.jar, and it speaks
-# exactly one protocol version, 1.21.11, so any other version fails loudly rather than
+# the protocol declared in its manifest (1.21.11 or 26.3), so a mismatched version fails rather than
 # producing a confusing handshake error. SessionPulse logs nothing when a milestone fires,
 # when it kicks, or when it refuses a login, so the proof for all three is what the bot
 # RECEIVED, read out of $WORKDIR/bot-<n>.log. The server log only supplies timing - the
@@ -78,11 +78,9 @@ if [[ -n "$BOT_JAR" ]]; then
         echo "::error::BOT_JAR is set but no file exists at: $BOT_JAR"
         exit 1
     fi
-    # MCProtocolLib is pinned to 1.21.11 in build.gradle.kts. Against any other server the
-    # handshake fails with a version mismatch that reads like a plugin fault, so refuse
-    # before downloading anything.
-    if [[ "$MC_VERSION" != "1.21.11" ]]; then
-        echo "::error::BOT_JAR speaks protocol 1.21.11 only; refusing to run it against $MC_VERSION."
+    BOT_VERSION="$(unzip -p "$BOT_JAR" META-INF/MANIFEST.MF | tr -d '\r' | sed -n 's/^Minecraft-Version: //p')"
+    if [[ "$MC_VERSION" != "$BOT_VERSION" ]]; then
+        echo "::error::BOT_JAR declares protocol '$BOT_VERSION'; refusing server $MC_VERSION."
         exit 1
     fi
     BOT_JAR="$(realpath "$BOT_JAR")"
@@ -90,12 +88,13 @@ fi
 
 mkdir -p "$WORKDIR/plugins"
 cd "$WORKDIR"
+rm -f evidence.json
 
 # ---------------------------------------------------------------------------
 # Resolve and verify the server jar
 # ---------------------------------------------------------------------------
 if [[ "$PLATFORM" != "spigot" ]]; then
-    API="https://fill.papermc.io/v3/projects/$PLATFORM/versions/$MC_VERSION/builds/latest"
+    API="https://fill.papermc.io/v3/projects/$PLATFORM/versions/$MC_VERSION/builds/${SERVER_BUILD:-latest}"
     echo "Resolving $PLATFORM $MC_VERSION from $API"
 
     BUILD_JSON="$(curl -fsS --retry 3 --retry-delay 5 -m 60 "$API")"
@@ -163,6 +162,10 @@ PROPS
 
 cp "$PLUGIN_JAR" plugins/
 echo "Installed plugin: $(basename "$PLUGIN_JAR")"
+# This record is retained alongside the logs and binds the actual server and fixture bytes.
+PLUGIN_SHA="$(sha256sum "$PLUGIN_JAR" | cut -d ' ' -f1)"
+SERVER_SHA="$(sha256sum server.jar | cut -d ' ' -f1)"
+JAVA_RUNTIME="$(java -version 2>&1 | head -1)"
 
 # The smoke config, written before the first boot so saveDefaultConfig() leaves it alone.
 # Every number is a validation minimum or chosen against one, and the reasoning is the
@@ -649,3 +652,16 @@ if [[ -n "$BOT_JAR" ]]; then
 else
     echo "Smoke test PASSED for $PLATFORM $MC_VERSION (build $BUILD_ID)."
 fi
+
+# Emit evidence only after every assertion succeeds. Failed runs keep logs, never a receipt.
+export PLATFORM MC_VERSION BUILD_ID CHANNEL PLUGIN_SHA SERVER_SHA JAVA_RUNTIME BOT_JAR
+export BOT_VERSION="${BOT_VERSION:-}"
+export BOT_SHA="$(if [[ -n "$BOT_JAR" ]]; then sha256sum "$BOT_JAR" | cut -d ' ' -f1; fi)"
+python3 - <<'PY'
+import json, os
+from pathlib import Path
+keys = ("PLATFORM", "MC_VERSION", "BUILD_ID", "CHANNEL", "PLUGIN_SHA", "SERVER_SHA", "JAVA_RUNTIME", "BOT_VERSION", "BOT_SHA")
+record = {key.lower(): os.environ[key] for key in keys}
+record.update(result="passed", gameplay=bool(os.environ["BOT_JAR"]))
+Path("evidence.json").write_text(json.dumps(record, sort_keys=True) + "\n")
+PY

@@ -58,7 +58,12 @@ repositories {
 // set rather than src/test, so it compiles to a runnable jar and can never be picked up
 // by shadowJar and shipped. Copied from SpiralGenesis's botClient.
 sourceSets {
-    create("botClient")
+    create("botClient") {
+        java.srcDir("src/probeClient/java")
+    }
+    create("botClient26") {
+        java.srcDir("src/probeClient/java")
+    }
 }
 
 // Declared once. The compile target and the test classpath must never drift apart,
@@ -127,6 +132,8 @@ dependencies {
     // speaks. A SNAPSHOT, so it can drift under us: when a smoke leg goes red on a bot
     // decode error rather than an assertion, suspect this line before the plugin.
     "botClientImplementation"("org.geysermc.mcprotocollib:protocol:1.21.11-SNAPSHOT")
+    // Separate classpath: both fixtures share the probe source, never the protocol library.
+    "botClient26Implementation"("org.geysermc.mcprotocollib:protocol:26.3-SNAPSHOT")
 }
 
 // The Minecraft versions a release declares, on Hangar here and on Modrinth in
@@ -571,11 +578,32 @@ tasks {
         archiveClassifier.set("")
         archiveVersion.set("")
         destinationDirectory.set(layout.buildDirectory.dir("test-fixtures"))
-        manifest { attributes["Main-Class"] = "com.ninja6.botclient.SessionPulseProbeBot" }
+        manifest {
+            attributes["Main-Class"] = "com.ninja6.botclient.SessionPulseProbeBot"
+            attributes["Minecraft-Version"] = "1.21.11"
+        }
         from(sourceSets["botClient"].output)
         // Runs as its own process against a live server, so unlike the plugin it does need
         // its dependencies inside it.
         from(configurations["botClientRuntimeClasspath"].map { if (it.isDirectory) it else zipTree(it) })
+        duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+        exclude("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA", "module-info.class")
+    }
+
+    // Java 21 bytecode; CI launches this fixture and the 26.3 server on Java 25.
+    register<Jar>("botClient26Jar") {
+        archiveBaseName.set("SessionPulseProbeBot26")
+        archiveClassifier.set("")
+        archiveVersion.set("")
+        destinationDirectory.set(layout.buildDirectory.dir("test-fixtures"))
+        manifest {
+            attributes["Main-Class"] = "com.ninja6.botclient.SessionPulseProbeBot"
+            attributes["Minecraft-Version"] = "26.3"
+        }
+        from(sourceSets["botClient26"].output)
+        // Runs as its own process against a live server, so unlike the plugin it does need
+        // its dependencies inside it.
+        from(configurations["botClient26RuntimeClasspath"].map { if (it.isDirectory) it else zipTree(it) })
         duplicatesStrategy = DuplicatesStrategy.EXCLUDE
         exclude("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA", "module-info.class")
     }

@@ -25,7 +25,8 @@ class ReleaseCandidateTest(unittest.TestCase):
         self.receipts.mkdir()
         self.args = Namespace(directory=str(self.directory), tag="v1.2.3-rc.1", sha="a" * 40,
                               run_id="52", attempt="1", platform=None, receipts=str(self.receipts),
-                              output=str(Path(self.temp.name) / "evidence.json"), evidence=None)
+                              output=str(Path(self.temp.name) / "evidence.json"), evidence=None,
+                              smoke_evidence=str(Path(self.temp.name) / "smoke.json"))
         self.jar = self.directory / "SessionPulse-1.2.3-rc.1.jar"
         with ZipFile(self.jar, "w") as archive:
             for name in release_candidate.CONTENTS:
@@ -36,16 +37,31 @@ class ReleaseCandidateTest(unittest.TestCase):
         (self.directory / "release-body.md").write_text("Notes\n\nRequires Java 21.\n")
         release_candidate.create(self.args)
 
-    def test_manifest_and_three_smoke_receipts_bind_candidate(self):
-        self.assertEqual(release_candidate.verify(self.args)["channel"], "beta")
-        for platform in ("paper", "folia", "spigot"):
-            self.args.platform = platform
-            self.args.output = str(self.receipts / f"smoke-{platform}.json")
+    def write_smoke(self, platform, minecraft="1.21.11"):
+        self.args.platform = platform
+        record = {"platform": platform, "mc_version": minecraft,
+                  "plugin_sha": release_candidate.digest(self.jar), "server_sha": "c" * 64,
+                  "bot_sha": "d" * 64, "bot_version": minecraft,
+                  "java_runtime": 'openjdk version "' + ("25" if minecraft == "26.3" else "21") + '.0.4"',
+                  "build_id": "147", "channel": "BETA", "result": "passed", "gameplay": True}
+        Path(self.args.smoke_evidence).write_text(json.dumps(record))
+        self.args.output = str(self.receipts / f"{platform}-{minecraft}.json")
+        return record
+
+    def write_all_receipts(self):
+        for platform, minecraft in release_candidate.SMOKE_CASES:
+            self.write_smoke(platform, minecraft)
             release_candidate.receipt(self.args)
+
+    def test_five_smoke_receipts_bind_candidate_and_runtime_matrix(self):
+        self.assertEqual(release_candidate.verify(self.args)["channel"], "beta")
+        self.write_all_receipts()
         self.args.output = str(Path(self.temp.name) / "evidence.json")
         release_candidate.evidence(self.args)
         self.args.evidence = self.args.output
         release_candidate.check_evidence(self.args)
+        evidence = json.loads(Path(self.args.output).read_text())
+        self.assertEqual(len(evidence["servers"]), 5)
 
     def test_reconciliation_summary_uses_verified_candidate_identity(self):
         self.args.modrinth_project = "sessionpulse"
@@ -89,20 +105,53 @@ class ReleaseCandidateTest(unittest.TestCase):
             release_candidate.verify(self.args)
 
     def test_rejects_missing_or_altered_smoke_evidence(self):
-        self.args.platform = "paper"
-        self.args.output = str(self.receipts / "paper.json")
+        self.write_smoke("paper")
         release_candidate.receipt(self.args)
-        with self.assertRaisesRegex(ValueError, "three smoke receipts"):
+        with self.assertRaisesRegex(ValueError, "five smoke receipts"):
             release_candidate.evidence(self.args)
-        for platform in ("folia", "spigot"):
-            self.args.platform = platform
-            self.args.output = str(self.receipts / f"{platform}.json")
-            release_candidate.receipt(self.args)
-        record = json.loads((self.receipts / "spigot.json").read_text())
+        self.write_all_receipts()
+        path = self.receipts / "spigot-26.3.json"
+        record = json.loads(path.read_text())
         record["jar_sha256"] = "0" * 64
-        (self.receipts / "spigot.json").write_text(json.dumps(record))
+        path.write_text(json.dumps(record))
         with self.assertRaisesRegex(ValueError, "mismatched jar_sha256"):
             release_candidate.evidence(self.args)
+
+    def test_rejects_wrong_runtime_protocol_digest_and_boot_only_record(self):
+        for key, value, message in (("java_runtime", 'openjdk version "21.0.4"', "Java 25"),
+                                     ("bot_version", "1.21.11", "bot_version"),
+                                     ("plugin_sha", "0" * 64, "plugin_sha"),
+                                     ("gameplay", False, "gameplay assertions")):
+            record = self.write_smoke("paper", "26.3")
+            record[key] = value
+            Path(self.args.smoke_evidence).write_text(json.dumps(record))
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, message):
+                release_candidate.receipt(self.args)
+
+    def test_rejects_duplicate_mislabeled_and_tampered_combined_evidence(self):
+        self.write_all_receipts()
+        path = self.receipts / "paper-26.3.json"
+        original = json.loads(path.read_text())
+        record = json.loads(path.read_text())
+        record["gameplay"]["mc_version"] = "1.21.11"
+        record["gameplay"]["bot_version"] = "1.21.11"
+        record["gameplay"]["java_runtime"] = 'openjdk version "21.0.4"'
+        path.write_text(json.dumps(record))
+        with self.assertRaisesRegex(ValueError, "Duplicate"):
+            release_candidate.evidence(self.args)
+        record = dict(original, platform="spigot")
+        path.write_text(json.dumps(record))
+        with self.assertRaisesRegex(ValueError, "mislabeled"):
+            release_candidate.evidence(self.args)
+        path.write_text(json.dumps(original))
+        self.args.output = str(Path(self.temp.name) / "evidence.json")
+        release_candidate.evidence(self.args)
+        self.args.evidence = self.args.output
+        record = json.loads(Path(self.args.output).read_text())
+        record["servers"] = record["servers"][:-1]
+        Path(self.args.output).write_text(json.dumps(record))
+        with self.assertRaisesRegex(ValueError, "incomplete"):
+            release_candidate.check_evidence(self.args)
 
     def test_rejects_wrong_embedded_version(self):
         with ZipFile(self.jar, "w") as archive:

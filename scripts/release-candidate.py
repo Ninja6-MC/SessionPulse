@@ -21,6 +21,30 @@ CONTENTS = (
     "META-INF/THIRD_PARTY_NOTICES.md",
 )
 DESTINATIONS = ["github", "modrinth", "hangar"]
+# Folia 26.3 is unavailable. Each advertised 26.3 platform must supply its own gameplay record.
+SMOKE_CASES = {("paper", "1.21.11"), ("folia", "1.21.11"), ("spigot", "1.21.11"),
+               ("paper", "26.3"), ("spigot", "26.3")}
+
+
+def validate_smoke(record, jar_sha):
+    case = (record.get("platform"), record.get("mc_version"))
+    if case not in SMOKE_CASES:
+        raise ValueError(f"Unexpected smoke case: {case}")
+    if record.get("plugin_sha") != jar_sha:
+        raise ValueError("Smoke gameplay record has mismatched plugin_sha")
+    if record.get("result") != "passed" or record.get("gameplay") is not True:
+        raise ValueError("Smoke gameplay record must pass gameplay assertions")
+    if record.get("bot_version") != case[1]:
+        raise ValueError("Smoke bot_version differs from server version")
+    java = "25" if case[1] == "26.3" else "21"
+    if not re.search(r'\bversion "' + java + r'(?:[."]|$)', record.get("java_runtime", "")):
+        raise ValueError(f"Smoke runtime must be Java {java}")
+    for key in ("server_sha", "bot_sha"):
+        if not re.fullmatch(r"[a-f0-9]{64}", record.get(key, "")):
+            raise ValueError(f"Smoke record has invalid {key}")
+    if not record.get("build_id") or not record.get("channel"):
+        raise ValueError("Smoke record must identify server build and channel")
+    return case
 
 
 def digest(path):
@@ -120,7 +144,12 @@ def receipt(args):
     manifest = verify(args)
     if args.platform not in ("paper", "folia", "spigot"):
         raise ValueError("Unsupported smoke platform")
+    gameplay = json.loads(Path(args.smoke_evidence).read_text())
+    validate_smoke(gameplay, manifest["files"][f"SessionPulse-{manifest['version']}.jar"])
+    if gameplay["platform"] != args.platform:
+        raise ValueError("Smoke evidence platform differs from receipt")
     record = {
+        "gameplay": gameplay,
         "candidate_id": manifest["candidate_id"],
         "manifest_sha256": digest(Path(args.directory) / "manifest.json"),
         "jar_sha256": manifest["files"][f"SessionPulse-{manifest['version']}.jar"],
@@ -135,9 +164,11 @@ def receipt(args):
 def evidence(args):
     manifest = verify(args)
     receipts = list(Path(args.receipts).glob("*.json"))
-    if len(receipts) != 3:
-        raise ValueError("Expected three smoke receipts")
+    if len(receipts) != len(SMOKE_CASES):
+        raise ValueError("Expected five smoke receipts")
     platforms = set()
+    cases = set()
+    servers = []
     for path in receipts:
         record = json.loads(path.read_text())
         for key, value in {
@@ -148,13 +179,21 @@ def evidence(args):
         }.items():
             if record.get(key) != value:
                 raise ValueError(f"Smoke receipt {path} has mismatched {key}")
+        gameplay = record.get("gameplay", {})
+        case = validate_smoke(gameplay, manifest["files"][f"SessionPulse-{manifest['version']}.jar"])
+        if case in cases or gameplay["platform"] != record.get("platform"):
+            raise ValueError("Duplicate or mislabeled smoke receipt")
+        cases.add(case)
+        servers.append(gameplay)
         platforms.add(record.get("platform"))
+    if cases != SMOKE_CASES:
+        raise ValueError(f"Smoke cases incomplete: {cases}")
     if platforms != {"paper", "folia", "spigot"}:
         raise ValueError(f"Smoke platforms incomplete: {platforms}")
     record = {"candidate_id": manifest["candidate_id"], "manifest_sha256": digest(Path(args.directory) / "manifest.json"),
               "jar_sha256": manifest["files"][f"SessionPulse-{manifest['version']}.jar"],
               "run_id": manifest["run_id"], "attempt": manifest["attempt"],
-              "platforms": sorted(platforms), "result": "passed"}
+              "platforms": sorted(platforms), "servers": sorted(servers, key=lambda s: (s["platform"], s["mc_version"])), "result": "passed"}
     Path(args.output).write_text(json.dumps(record, sort_keys=True) + "\n")
 
 
@@ -168,6 +207,12 @@ def check_evidence(args):
                        "platforms": ["folia", "paper", "spigot"], "result": "passed"}.items():
         if record.get(key) != value:
             raise ValueError(f"Test evidence has mismatched {key}")
+
+    servers = record.get("servers", [])
+    cases = [validate_smoke(server, manifest["files"][f"SessionPulse-{manifest['version']}.jar"])
+             for server in servers]
+    if len(cases) != len(SMOKE_CASES) or set(cases) != SMOKE_CASES:
+        raise ValueError("Test evidence has incomplete or duplicate smoke cases")
 
 
 def reconciliation_record(manifest, modrinth_project, hangar_project):
@@ -191,6 +236,7 @@ def main():
     parser.add_argument("--attempt", required=True)
     parser.add_argument("--platform")
     parser.add_argument("--receipts")
+    parser.add_argument("--smoke-evidence")
     parser.add_argument("--evidence")
     parser.add_argument("--output")
     parser.add_argument("--modrinth-project", default="sessionpulse")
