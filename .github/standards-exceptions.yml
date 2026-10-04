@@ -4,17 +4,4 @@
 # This file is required even when the exception list is empty (N6-REPO-05).
 
 repo: SessionPulse
-
-# The release environment is protected and replacement tokens are environment
-# secrets. The workflow fails closed until the migration audit is complete.
-exceptions:
-  - rule: N6-REL-03
-    type: transitional
-    reason: >
-      The retained candidate promotion path is implemented and registry tokens have
-      moved to release environment secrets. Issue #79 must finish the credential-scope
-      audit and enable RELEASE_SECRETS_MIGRATED after review. The first approved release
-      must verify the complete promotion path before this exception is removed.
-    approved_by: bharathasl74185@gmail.com
-    approved_on: 2026-09-28
-    revisit_by: 2026-10-04
+exceptions: []
