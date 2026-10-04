@@ -349,9 +349,10 @@ if that name is taken — and the plugin starts from an empty set. A misshapen f
 repaired in place so the next start finds a clean one. If the copy aside itself fails,
 the plugin refuses to write at all rather than destroy the file; that is logged.
 
-A `data.yml` carrying a **newer `schema-version`** than this plugin understands is never
-written over. Downgrading the plugin therefore does not destroy data written by a newer
-one — but the newer data is not read either.
+A `data.yml` carrying a **newer `schema-version`** than this plugin understands is read
+as far as possible: recognised player records and fields are loaded, but writes are refused
+for the entire session. The file is never written over, so downgrading the plugin does not
+destroy data written by a newer one.
 
 Numbers are read the same way as in `config.yml`: a quoted number is fine, while a
 negative or non-numeric value is read as `0` with a warning.
