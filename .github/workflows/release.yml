@@ -373,11 +373,11 @@ jobs:
           files: candidate/SessionPulse-${{ needs.candidate.outputs.version }}.jar
           dependencies: |
             essentialsx(optional){modrinth:hXiIvTyT}
+          # Modrinth combines flat loader/version filters. Folia has no 26.3
+          # build; keep this version's advertised combinations conservative.
           loaders: |
             paper
             spigot
-            purpur
-            folia
           game-versions: |
             1.20.4
             1.20.5
