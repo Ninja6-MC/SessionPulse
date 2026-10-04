@@ -26,11 +26,20 @@ For the meaning of every key in `config.yml`, see the
 
 ## 1. Installing
 
-SessionPulse requires **Java 21**. It declares API version 1.20 and is declared for
-Minecraft 1.20.4 through 1.21.11.
+SessionPulse is compiled for **Java 21** and declares API version 1.20. One JAR supports
+Paper, Spigot and Folia on Minecraft 1.20.4 through 1.21.11. Starting with
+**0.2.0-beta.1**, Paper and Spigot 26.3 are also supported and require **Java 25** for
+the server. Older supported servers can continue using Java 21.
 
-Paper, Spigot and Folia are each exercised by the project's CI. Purpur is a Paper fork;
-the plugin is expected to run there, but CI does not test it.
+Folia has no published 26.3 build and is not declared for that version. Minecraft 26.1
+and 26.2 are not included in the support list. Paper and Spigot 26.3 and all three
+platforms on 1.21.11 have gameplay checks in CI; 1.20.4 Paper and Folia have startup
+checks. Purpur is a Paper fork; the plugin is expected to run there, but CI does not
+test it.
+
+When upgrading an existing server to 26.3, back up its world and plugin data first,
+install Java 25, and retain your SessionPulse configuration and data files. Check the
+plugin version before testing: older releases do not declare 26.3 support.
 
 Download `SessionPulse-<version>.jar` from
 [GitHub Releases](https://github.com/Ninja6-MC/SessionPulse/releases). Every version

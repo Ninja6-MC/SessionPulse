@@ -141,17 +141,16 @@ dependencies {
 // together.
 //
 // Explicit, not `1.20.x`/`1.21.x` or a range. api-version in plugin.yml is 1.20 and the
-// compile target is 1.20.4, so 1.20.0-1.20.3 are not claimed; and the boot legs in ci.yml
-// cover 1.20.4 and 1.21.11, so nothing newer than 1.21.11 is. 26.x in particular is NOT
-// claimed: it refuses to boot below Java 25 and adventure-platform-bukkit 4.4.1 predates
-// it, which ci.yml records as unmeasured. Widening this list is a compatibility claim and
-// belongs with the evidence for it, not with a release.
+// compile target is 1.20.4, so 1.20.0-1.20.3 are not claimed. Paper and Spigot 26.3
+// have separate Java 25 gameplay legs; intermediate 26.x versions are not implied.
+// Hangar uses the PAPER platform identifier; the README states the separate Folia
+// limit because no Folia 26.3 build exists. Widen this list only with test evidence.
 //
 // Comma-separated because Hangar's platformVersions is a List<String> and the property
 // has to arrive as one string; it is split below exactly as SpiralGenesis splits it.
 val releaseGameVersions =
     "1.20.4,1.20.5,1.20.6,1.21,1.21.1,1.21.2,1.21.3,1.21.4,1.21.5,1.21.6,1.21.7,1.21.8," +
-        "1.21.9,1.21.10,1.21.11"
+        "1.21.9,1.21.10,1.21.11,26.3"
 
 // Hangar publication. Every value is a property or an environment variable so the
 // release workflow can set it per tag, and nothing here runs during a build or a test:

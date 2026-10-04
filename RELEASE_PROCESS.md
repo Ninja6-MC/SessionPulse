@@ -165,8 +165,9 @@ GitHub Actions (`.github/workflows/release.yml`) will:
     and only after its version upload succeeded. See [Store Descriptions](#store-descriptions).
 
 **Requires Java 21.** The plugin is built for Java 21 and declares it on Modrinth; every
-server must run on Java 21 or newer to load it, including 1.20.4-1.20.6, which
-Minecraft itself allows on Java 17.
+server must run on Java 21 or newer to load it. Supported Paper and Spigot 26.3
+servers require Java 25; the plugin compilation target stays at Java 21 for older
+supported servers. Folia 26.3 is not declared because no server build is available.
 
 ### Release Environment and Secrets
 
@@ -273,7 +274,9 @@ reconciliation. Never rebuild a jar for the same release tag.
 
 The Minecraft versions declared to both registries are one explicit list, kept in
 `build.gradle.kts` (`releaseGameVersions`) and in `release.yml` (`game-versions`): 1.20.4
-to 1.20.6 and 1.21 to 1.21.11. Edit both together.
+to 1.20.6, 1.21 to 1.21.11, and 26.3. Edit both together. The 26.3 entry applies to
+Paper and Spigot; document Folia's separate supported range in the README and store
+description. Do not fill the gap with untested 26.1 or 26.2 versions.
 
 ### Store Descriptions
 
