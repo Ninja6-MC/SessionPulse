@@ -71,6 +71,10 @@ require Java 25. Minecraft 26.3 support starts with **0.2.0-beta.1** and applies
 and Spigot. Folia has no published 26.3 build and is not claimed for that version.
 Minecraft 26.1 and 26.2 are not included in the declared support list.
 
+Modrinth lists 0.2.0-beta.1 for Paper and Spigot because its version filters cannot
+represent Folia's separate Minecraft range. Folia users can download the same JAR
+from GitHub Releases for the supported older versions.
+
 All three platforms have CI checks, including gameplay checks on Paper and Spigot 26.3
 and Paper, Spigot and Folia 1.21.11. Purpur is a Paper fork and is expected to work, but
 it is not tested.

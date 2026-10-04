@@ -41,6 +41,10 @@ When upgrading an existing server to 26.3, back up its world and plugin data fir
 install Java 25, and retain your SessionPulse configuration and data files. Check the
 plugin version before testing: older releases do not declare 26.3 support.
 
+For Folia on the supported older versions, use the same JAR from GitHub Releases.
+Modrinth lists 0.2.0-beta.1 for Paper and Spigot only, since one version's filters
+cannot express a separate Minecraft range for Folia.
+
 Download `SessionPulse-<version>.jar` from
 [GitHub Releases](https://github.com/Ninja6-MC/SessionPulse/releases). Every version
 before 1.0.0 is a pre-release and is listed there marked *Pre-release*; 1.0.0 will be the

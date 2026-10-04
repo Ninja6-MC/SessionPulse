@@ -278,6 +278,14 @@ to 1.20.6, 1.21 to 1.21.11, and 26.3. Edit both together. The 26.3 entry applies
 Paper and Spigot; document Folia's separate supported range in the README and store
 description. Do not fill the gap with untested 26.1 or 26.2 versions.
 
+Modrinth cannot attach a different Minecraft range to each loader in one version.
+The 0.2.0-beta.1 version therefore lists Paper and Spigot only, preventing its 26.3
+entry from implying Folia or untested Purpur support. The same JAR still supports
+Folia on 1.20.4 through 1.21.11 and is available from GitHub Releases; existing
+Modrinth versions keep their older Folia declarations. Hangar's PAPER identifier
+covers the Paper distribution; the README and store description give Folia's
+separate compatibility range.
+
 ### Store Descriptions
 
 Both project descriptions are generated from `README.md` into
