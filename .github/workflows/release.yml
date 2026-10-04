@@ -158,17 +158,20 @@ jobs:
           java-version: ${{ matrix.java }}
           distribution: temurin
       - name: Build Spigot test server
-        id: buildtools
+        id: spigot-input
         if: matrix.platform == 'spigot'
+        env:
+          MC_VERSION: ${{ matrix.minecraft }}
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/buildtools" "$RUNNER_TEMP/spigot-jar"
+          mkdir -p "$RUNNER_TEMP/buildtools" "$RUNNER_TEMP/spigot-jar" "$RUNNER_TEMP/spigot-input"
+          REVISION="$(python3 scripts/spigot-input.py --minecraft "$MC_VERSION" --field revision)"
+          BUILD="$(python3 scripts/spigot-input.py --minecraft "$MC_VERSION" --field buildtools_build)"
+          curl -fsSL --retry 3 --retry-delay 5 -m 60 -o "$RUNNER_TEMP/spigot-input/metadata.json" "https://hub.spigotmc.org/versions/$REVISION.json"
+          curl -fsSL --retry 3 --retry-delay 5 -o "$RUNNER_TEMP/buildtools/BuildTools.jar" "https://hub.spigotmc.org/jenkins/job/BuildTools/$BUILD/artifact/target/BuildTools.jar"
+          python3 scripts/spigot-input.py --minecraft "$MC_VERSION" --metadata "$RUNNER_TEMP/spigot-input/metadata.json" --buildtools "$RUNNER_TEMP/buildtools/BuildTools.jar" --output "$RUNNER_TEMP/spigot-input/input.json" --github-output "$GITHUB_OUTPUT"
           cd "$RUNNER_TEMP/buildtools"
-          BUILD="$(curl -fsSL --retry 3 --retry-delay 5 -m 60 'https://hub.spigotmc.org/jenkins/job/BuildTools/lastSuccessfulBuild/api/json?tree=number' | jq -er '.number')"
-          [[ "$BUILD" =~ ^[0-9]+$ ]]
-          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
-          curl -fsSL --retry 3 --retry-delay 5 -o BuildTools.jar "https://hub.spigotmc.org/jenkins/job/BuildTools/$BUILD/artifact/target/BuildTools.jar"
-          java -jar BuildTools.jar --rev "${{ matrix.minecraft }}" --compile SPIGOT --output-dir "$RUNNER_TEMP/spigot-jar" --final-name "spigot-${{ matrix.minecraft }}.jar"
+          java -jar BuildTools.jar --rev "$REVISION" --compile SPIGOT --output-dir "$RUNNER_TEMP/spigot-jar" --final-name "spigot-$MC_VERSION.jar"
       - name: Exercise downloaded JAR
         env:
           VERSION: ${{ needs.candidate.outputs.version }}
@@ -176,7 +179,8 @@ jobs:
           SPIGOT_JAR: ${{ runner.temp }}/spigot-jar/spigot-${{ matrix.minecraft }}.jar
           BOT_JAR: build/test-fixtures/${{ matrix.bot }}.jar
           SERVER_BUILD: ${{ matrix.server_build }}
-          BUILDTOOLS_BUILD: ${{ steps.buildtools.outputs.build }}
+          BUILDTOOLS_BUILD: ${{ steps.spigot-input.outputs.buildtools_build }}
+          SPIGOT_INPUT: ${{ matrix.platform == 'spigot' && format('{0}/spigot-input/input.json', runner.temp) || '' }}
         run: |
           set -euo pipefail
           chmod +x .github/scripts/smoke-test.sh
@@ -202,6 +206,7 @@ jobs:
             run-${{ matrix.platform }}/server.log
             run-${{ matrix.platform }}/bot-*.log
             run-${{ matrix.platform }}/evidence.json
+            run-${{ matrix.platform }}/spigot-input.json
           if-no-files-found: warn
           retention-days: 30
 

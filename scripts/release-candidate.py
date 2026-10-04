@@ -44,6 +44,12 @@ def validate_smoke(record, jar_sha):
             raise ValueError(f"Smoke record has invalid {key}")
     if not record.get("build_id") or not record.get("channel"):
         raise ValueError("Smoke record must identify server build and channel")
+    if case[0] == "spigot":
+        path = Path(__file__).parent / "server-inputs" / f"spigot-{case[1]}.json"
+        expected = json.loads(path.read_text())
+        expected["input_sha256"] = digest(path)
+        if record.get("spigot_input") != expected:
+            raise ValueError("Smoke Spigot source inputs differ from pinned revision")
     return case
 
 

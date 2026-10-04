@@ -44,6 +44,10 @@ class ReleaseCandidateTest(unittest.TestCase):
                   "bot_sha": "d" * 64, "bot_version": minecraft,
                   "java_runtime": 'openjdk version "' + ("25" if minecraft == "26.3" else "21") + '.0.4"',
                   "build_id": "147", "channel": "BETA", "result": "passed", "gameplay": True}
+        if platform == "spigot":
+            path = SCRIPT.parent / "server-inputs" / f"spigot-{minecraft}.json"
+            record["spigot_input"] = json.loads(path.read_text())
+            record["spigot_input"]["input_sha256"] = release_candidate.digest(path)
         Path(self.args.smoke_evidence).write_text(json.dumps(record))
         self.args.output = str(self.receipts / f"{platform}-{minecraft}.json")
         return record
@@ -127,6 +131,13 @@ class ReleaseCandidateTest(unittest.TestCase):
             Path(self.args.smoke_evidence).write_text(json.dumps(record))
             with self.subTest(key=key), self.assertRaisesRegex(ValueError, message):
                 release_candidate.receipt(self.args)
+
+    def test_rejects_spigot_source_ref_drift(self):
+        record = self.write_smoke("spigot", "26.3")
+        record["spigot_input"]["source_metadata"]["refs"]["Spigot"] = "0" * 40
+        Path(self.args.smoke_evidence).write_text(json.dumps(record))
+        with self.assertRaisesRegex(ValueError, "Spigot source inputs"):
+            release_candidate.receipt(self.args)
 
     def test_rejects_duplicate_mislabeled_and_tampered_combined_evidence(self):
         self.write_all_receipts()

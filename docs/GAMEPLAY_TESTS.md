@@ -29,8 +29,11 @@ BOT_JAR=build/test-fixtures/SessionPulseProbeBot26.jar SERVER_BUILD=147 \
   .github/scripts/smoke-test.sh paper 26.3 build/libs/SessionPulse-0.1.0-SNAPSHOT.jar
 ```
 
-For Spigot, build a server using official BuildTools with `--rev 26.3`, then
-pass its path as `SPIGOT_JAR`. For older gameplay legs use
+For Spigot, the pinned input files in `scripts/server-inputs/` record official
+revision 4663 (26.3) or 4598 (1.21.11), all four source refs, and BuildTools job
+201 with its SHA-256. Verify the numeric revision metadata and BuildTools JAR
+with `scripts/spigot-input.py`, build with `--rev <revision>`, and pass the verified
+input record as `SPIGOT_INPUT` plus the compiled JAR as `SPIGOT_JAR`. For older gameplay legs use
 `SessionPulseProbeBot.jar` and version `1.21.11`. The script validates the fixture's
 manifest protocol version before downloading anything. Both clients stay outside
 the plugin JAR and use separate protocol-library classpaths.
@@ -40,8 +43,11 @@ the plugin JAR and use separate protocol-library classpaths.
 A passing run writes `run-<platform>/evidence.json`, retained with server and bot
 logs. It records Minecraft version, resolved build/channel, actual Java runtime,
 server SHA-256, fixture SHA-256 and tested plugin SHA-256. Paper's 26.3 build is
-pinned; BuildTools resolves the named Spigot revision and its resulting bytes are
-identified by the recorded digest.
+pinned. Spigot builds use numeric revisions verified against committed source
+metadata and a pinned BuildTools binary digest; the input digest keys CI's cache.
+All source refs are retained in `spigot-input.json` and the gameplay evidence,
+alongside the compiled server digest. A metadata or tool change requires an
+explicit input-file update and new gameplay evidence.
 
 Release smoke jobs download and verify the retained candidate before testing.
 Promotion requires five distinct passing gameplay receipts: Paper, Folia and

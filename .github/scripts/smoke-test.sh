@@ -64,12 +64,18 @@ fi
 PLUGIN_JAR="$(realpath "$PLUGIN_JAR")"
 
 SPIGOT_JAR="${SPIGOT_JAR:-}"
+SPIGOT_INPUT="${SPIGOT_INPUT:-}"
 if [[ "$PLATFORM" == "spigot" ]]; then
     if [[ -z "$SPIGOT_JAR" || ! -f "$SPIGOT_JAR" ]]; then
         echo "::error::Platform spigot needs SPIGOT_JAR naming a BuildTools-built server jar; got '$SPIGOT_JAR'."
         exit 1
     fi
     SPIGOT_JAR="$(realpath "$SPIGOT_JAR")"
+    if [[ -z "$SPIGOT_INPUT" || ! -f "$SPIGOT_INPUT" ]]; then
+        echo "::error::Spigot needs verified SPIGOT_INPUT source metadata."
+        exit 1
+    fi
+    SPIGOT_INPUT="$(realpath "$SPIGOT_INPUT")"
 fi
 
 BOT_JAR="${BOT_JAR:-}"
@@ -129,6 +135,7 @@ else
     CHANNEL="local"
     echo "Using $PLATFORM $MC_VERSION from $SPIGOT_JAR ($BUILD_ID, $CHANNEL)"
     cp "$SPIGOT_JAR" server.jar
+    cp "$SPIGOT_INPUT" spigot-input.json
 fi
 
 # ---------------------------------------------------------------------------
@@ -665,5 +672,7 @@ from pathlib import Path
 keys = ("PLATFORM", "MC_VERSION", "BUILD_ID", "CHANNEL", "PLUGIN_SHA", "SERVER_SHA", "JAVA_RUNTIME", "BOT_VERSION", "BOT_SHA")
 record = {key.lower(): os.environ[key] for key in keys}
 record.update(result="passed", gameplay=bool(os.environ["BOT_JAR"]))
+if record["platform"] == "spigot":
+    record["spigot_input"] = json.loads(Path("spigot-input.json").read_text())
 Path("evidence.json").write_text(json.dumps(record, sort_keys=True) + "\n")
 PY
