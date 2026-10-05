@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const runner = require('../medium-player-validation.cjs');
 test('import is offline and parses truncated figures', () => {
-  assert.deepEqual(runner.parseTime('Your counted window: 0.2h (15 min). Lifetime: 1.7h.'), { minutes: 15, hours: 0.2, lifetimeHours: 1.7 });
+  assert.deepEqual(runner.parseTime(runner.PREFIX + 'Your counted window: 0.2h (15 min). Lifetime: 1.7h.'), { minutes: 15, hours: 0.2, lifetimeHours: 1.7 });
   assert.equal(runner.parseTime('Other plugin: 15 min'), null);
 });
 test('silent spans credit threshold, not zero or full wall time', () => {
@@ -41,4 +41,18 @@ test('exact per-channel allowlist excludes unrelated public chat', () => {
   assert.deepEqual(runner.classifyEvent('chat', expected), { text: expected, malformed: false });
   assert.deepEqual(runner.classifyEvent('chat', '<aqua>' + expected + '</aqua>'), { text: expected, malformed: true });
   assert.equal(runner.classifyEvent('chat', 'A player says: ' + expected), null);
+});
+
+test('actual Medium command prefix is required for time and denial evidence', () => {
+  const body = 'Your counted window: 0.0h (0 min). Lifetime: 0.0h.';
+  const time = runner.PREFIX + body;
+  const denial = runner.PREFIX + 'You do not have permission to do that.';
+  assert.deepEqual(runner.parseTime(time), { minutes: 0, hours: 0, lifetimeHours: 0 });
+  assert.equal(runner.parseTime(body), null);
+  assert.deepEqual(runner.classifyEvent('chat', time), { text: time, malformed: false });
+  assert.deepEqual(runner.classifyEvent('chat', denial), { text: denial, malformed: false });
+  assert.equal(runner.classifyEvent('chat', 'You do not have permission to do that.'), null);
+  assert.equal(runner.classifyEvent('chat', '<CommunityPlayer> ' + time), null);
+  assert.equal(runner.classifyEvent('chat', 'OtherPlugin: ' + denial), null);
+  assert.deepEqual(runner.classifyEvent('chat', '<gray>' + time + '</gray>'), { text: time, malformed: true });
 });
