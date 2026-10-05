@@ -56,3 +56,16 @@ test('actual Medium command prefix is required for time and denial evidence', ()
   assert.equal(runner.classifyEvent('chat', 'OtherPlugin: ' + denial), null);
   assert.deepEqual(runner.classifyEvent('chat', '<gray>' + time + '</gray>'), { text: time, malformed: true });
 });
+
+test('reconnect replay ignores sound events and checks exact text channels', () => {
+  assert.equal(runner.hasMilestoneReplay([{ channel: 'sound', packet: 'sound_effect' }]), false);
+  assert.equal(runner.hasMilestoneReplay([{ channel: 'sound', text: runner.EXPECTED[0].title }]), false);
+  assert.equal(runner.hasMilestoneReplay([{ channel: 'chat', text: runner.PREFIX + 'Your counted window: 0.2h (16 min). Lifetime: 0.2h.' }]), false);
+  for (const item of runner.EXPECTED) {
+    for (const channel of ['chat', 'title', 'subtitle', 'actionbar']) {
+      const text = channel === 'chat' ? runner.PREFIX + item.chat : item[channel];
+      assert.equal(runner.hasMilestoneReplay([{ channel, text }]), true);
+      assert.equal(runner.hasMilestoneReplay([{ channel, text: 'Unrelated ' + text }]), false);
+    }
+  }
+});

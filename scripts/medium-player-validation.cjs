@@ -47,6 +47,12 @@ function classifyEvent(channel, text) {
   });
   return reply || reminder ? { text: normalized, malformed: normalized !== text } : null;
 }
+function hasMilestoneReplay(events) {
+  return events.some(event => typeof event.text === 'string' && EXPECTED.some(item => {
+    if (event.channel === 'chat') return event.text === PREFIX + item.chat;
+    return ['title', 'subtitle', 'actionbar'].includes(event.channel) && event.text === item[event.channel];
+  }));
+}
 async function main() {
   const username = process.env.SPULSE_USERNAME, password = process.env.SPULSE_PASSWORD;
   if (!/^[A-Za-z0-9_]{3,16}$/.test(username || '') || !/^[!-~]{8,256}$/.test(password || '')) throw new Error('Provision a disposable account and supply credentials through environment variables.');
@@ -173,12 +179,12 @@ async function main() {
       const before = await query(), since = result.events.length;
       close(); await delay(3); await connect(); const after = await query(); await delay(12);
       assert(after.minutes >= before.minutes && after.minutes <= before.minutes + 1, 'Window changed across reconnect.');
-      assert(!result.events.slice(since).some(e => EXPECTED.some(item => e.text === item.title || e.text.includes(item.chat))), 'Earlier milestone replayed.');
+      assert(!hasMilestoneReplay(result.events.slice(since)), 'Earlier milestone replayed.');
       return { before, after, secondsObserved: 12, limitation: 'Join/leave only; no server restart.' };
     });
     result.outcome = 'PASS_WITH_MANUAL_GAPS';
   } catch (error) { result.outcome = 'FAIL'; result.error = clean(error.message); process.exitCode = 1; }
   finally { close(); clearTimeout(watchdog); process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); result.finishedAt = new Date().toISOString(); save(); console.log('Evidence: ' + output + ' (' + result.outcome + ')'); }
 }
-module.exports = { parseTime, loginPacket, idleVerdict, classifyEvent, EXPECTED, PREFIX };
+module.exports = { parseTime, loginPacket, idleVerdict, classifyEvent, hasMilestoneReplay, EXPECTED, PREFIX };
 if (require.main === module) main().catch(() => { console.error('Cannot start validation: check credentials, port, output path and dependency setup.'); process.exitCode = 1; });
