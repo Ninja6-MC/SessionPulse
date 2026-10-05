@@ -94,3 +94,12 @@ Exit 0 and `PASS_WITH_MANUAL_GAPS` mean these scoped checks passed. Any failed o
 missing observation exits nonzero and retains partial evidence. This script was
 prepared and tested offline; production invocation requires the operator's next
 instruction and a provisioned account.
+
+The runner installs a process-local, read-only NBT string decoder before its first connection. Minecraft Java encodes NBT strings with Modified UTF-8; the current bot dependency treats those bytes as ordinary UTF-8 and replaces supplementary emoji with invalid-character markers. The decoder handles Java surrogate pairs, modified NUL, and standard UTF-8 used by intermediaries, and rejects malformed or truncated strings. It changes no installed dependency files and keeps all exact reminder and privacy checks. Run the runner in a fresh Node process so no protocol parser has already been compiled.
+
+Offline regression checks require Node, Java 17 or newer on PATH, and the existing bot dependency directory; they never connect to a server:
+
+```powershell
+$env:BOT_MODULE_ROOT = "C:/path/to/node_modules"
+node --test scripts/tests/medium-player-validation.test.cjs scripts/tests/nbt-utf8-reader.test.cjs
+```
