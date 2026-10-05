@@ -3,13 +3,15 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { performance } = require('node:perf_hooks');
+const PREFIX = 'Ninja6 \u00bb ';
 const EXPECTED = [
   { minute: 5, chat: "\u{1f4a7} You've been playing for 5 minutes. Stay hydrated!", title: '5 Minutes', subtitle: 'Stay hydrated & stretch', actionbar: '\u{1f4a7} 5m Played \u2014 Stay Hydrated!', sound: 'block.note_block.chime' },
   { minute: 10, chat: '\u{1f9d8} 10 minutes in. Check your posture.', title: '10 Minutes', subtitle: 'Check your posture', actionbar: '\u{1f9d8} 10m Played \u2014 Posture Check!', sound: 'block.note_block.chime' },
   { minute: 15, chat: '\u{1f440} 15 minutes in. Look 20 feet away for 20 seconds.', title: '15 Minutes', subtitle: 'Look 20 feet away for 20s', actionbar: '\u{1f440} 15m Played \u2014 Eye Break!', sound: 'block.note_block.bell' }
 ];
 function parseTime(text) {
-  const m = text.match(/^Your counted window: (\d+\.\d)h \((\d+) min\)\. Lifetime: (\d+\.\d)h\.$/);
+  if (!text.startsWith(PREFIX)) return null;
+  const m = text.slice(PREFIX.length).match(/^Your counted window: (\d+\.\d)h \((\d+) min\)\. Lifetime: (\d+\.\d)h\.$/);
   return m ? { minutes: Number(m[2]), hours: Number(m[1]), lifetimeHours: Number(m[3]) } : null;
 }
 function varint(value) {
@@ -38,9 +40,9 @@ function classifyEvent(channel, text) {
   const normalized = text.replace(/<\/?(?:red|gray|yellow|aqua|gold|white|green|blue|bold|italic|reset)>/g, '')
     .replace(/\u00a7[0-9a-fk-orx]/gi, '');
   const reply = channel === 'chat' && (parseTime(normalized)
-    || ['You do not have permission to do that.', 'SessionPulse commands', 'Top playtime'].includes(normalized));
+    || ['You do not have permission to do that.', 'SessionPulse commands', 'Top playtime'].some(reply => normalized === PREFIX + reply));
   const reminder = EXPECTED.some(item => {
-    if (channel === 'chat') return normalized === 'Ninja6 \u00bb ' + item.chat;
+    if (channel === 'chat') return normalized === PREFIX + item.chat;
     return ['actionbar', 'title', 'subtitle'].includes(channel) && normalized === item[channel];
   });
   return reply || reminder ? { text: normalized, malformed: normalized !== text } : null;
@@ -141,7 +143,7 @@ async function main() {
     await check('Fresh account and alias response', async () => { baseline = await query('/sessionpulse time'); assert(baseline.minutes <= 1, 'Window is not fresh; use a new normal account without resetting existing records.'); return baseline; });
     await check('Nonadmin denial (read-only other-player query)', async () => {
       const since = result.events.length; bot.chat('/spulse time SP_ReadOnly');
-      await wait(() => result.events.slice(since).some(e => e.text === 'You do not have permission to do that.'), 'permission denial');
+      await wait(() => result.events.slice(since).some(e => e.text === PREFIX + 'You do not have permission to do that.'), 'permission denial');
       return 'No reset/reload command attempted; missing denial aborts the run.';
     });
     await check('Active time increases', async () => { await active(75); const after = await query(); assert(after.minutes > baseline.minutes, 'No active-time increase.'); return after; });
@@ -158,7 +160,7 @@ async function main() {
       return EXPECTED.map(item => {
         const counts = {};
         for (const channel of ['chat', 'actionbar', 'title', 'subtitle']) {
-          const text = channel === 'chat' ? 'Ninja6 \u00bb ' + item.chat : item[channel];
+          const text = channel === 'chat' ? PREFIX + item.chat : item[channel];
           counts[channel] = result.events.filter(e => e.channel === channel && e.text === text).length;
           assert(counts[channel] === 1, `Minute ${item.minute} ${channel}: expected one exact packet, got ${counts[channel]}.`);
         }
@@ -176,5 +178,5 @@ async function main() {
   } catch (error) { result.outcome = 'FAIL'; result.error = clean(error.message); process.exitCode = 1; }
   finally { close(); clearTimeout(watchdog); process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); result.finishedAt = new Date().toISOString(); save(); console.log('Evidence: ' + output + ' (' + result.outcome + ')'); }
 }
-module.exports = { parseTime, loginPacket, idleVerdict, classifyEvent, EXPECTED };
+module.exports = { parseTime, loginPacket, idleVerdict, classifyEvent, EXPECTED, PREFIX };
 if (require.main === module) main().catch(() => { console.error('Cannot start validation: check credentials, port, output path and dependency setup.'); process.exitCode = 1; });
