@@ -55,6 +55,8 @@ async function main() {
   const root = process.env.BOT_MODULE_ROOT;
   const mineflayer = require(path.join(root, 'mineflayer'));
   const nbt = require(path.join(root, 'prismarine-nbt'));
+  // Install before the first bot compiles its packet parser; no dependency files change.
+  require('./nbt-utf8-reader.cjs').installNbtUtf8Reader(nbt, require(path.join(root, 'protodef')).utils.PartialReadError);
   const port = Number(process.env.SPULSE_PORT || 42567);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid port.');
   const output = path.resolve(process.env.SPULSE_OUTPUT || 'sessionpulse-medium-validation.json');
