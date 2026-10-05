@@ -31,3 +31,14 @@ test('long password uses multi-byte payload length, not truncated size', () => {
   assert.equal(packet[offset], 0x8f); assert.equal(packet[offset + 1], 0x02);
   assert.equal(packet.length - offset - 2, 271);
 });
+
+test('exact per-channel allowlist excludes unrelated public chat', () => {
+  assert.equal(runner.classifyEvent('chat', '<CommunityPlayer> I have 5 Minutes before dinner'), null);
+  assert.equal(runner.classifyEvent('chat', '5 Minutes'), null);
+  assert.equal(runner.classifyEvent('title', 'Someone said 5 Minutes'), null);
+  assert.deepEqual(runner.classifyEvent('title', '5 Minutes'), { text: '5 Minutes', malformed: false });
+  const expected = 'Ninja6 \u00bb ' + runner.EXPECTED[0].chat;
+  assert.deepEqual(runner.classifyEvent('chat', expected), { text: expected, malformed: false });
+  assert.deepEqual(runner.classifyEvent('chat', '<aqua>' + expected + '</aqua>'), { text: expected, malformed: true });
+  assert.equal(runner.classifyEvent('chat', 'A player says: ' + expected), null);
+});

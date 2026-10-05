@@ -34,6 +34,17 @@ function idleVerdict(before, after, elapsed) {
   const delta = after.minutes - before.minutes;
   return elapsed >= 475 && delta >= 4 && delta <= 6;
 }
+function classifyEvent(channel, text) {
+  const normalized = text.replace(/<\/?(?:red|gray|yellow|aqua|gold|white|green|blue|bold|italic|reset)>/g, '')
+    .replace(/\u00a7[0-9a-fk-orx]/gi, '');
+  const reply = channel === 'chat' && (parseTime(normalized)
+    || ['You do not have permission to do that.', 'SessionPulse commands', 'Top playtime'].includes(normalized));
+  const reminder = EXPECTED.some(item => {
+    if (channel === 'chat') return normalized === 'Ninja6 \u00bb ' + item.chat;
+    return ['actionbar', 'title', 'subtitle'].includes(channel) && normalized === item[channel];
+  });
+  return reply || reminder ? { text: normalized, malformed: normalized !== text } : null;
+}
 async function main() {
   const username = process.env.SPULSE_USERNAME, password = process.env.SPULSE_PASSWORD;
   if (!/^[A-Za-z0-9_]{3,16}$/.test(username || '') || !/^[!-~]{8,256}$/.test(password || '')) throw new Error('Provision a disposable account and supply credentials through environment variables.');
@@ -69,12 +80,11 @@ async function main() {
     catch (error) { result.checks.push({ name, status: 'FAIL', evidence: clean(error.message) }); save(); throw error; }
   }
   function event(channel, raw) {
-    const text = clean(raw);
-    // Never retain unrelated server chat, authentication payloads or account lists.
-    if (!parseTime(text) && !/permission to do that|SessionPulse commands|Top playtime/.test(text)
-        && !EXPECTED.some(item => Object.values(item).some(v => typeof v === 'string' && text.includes(v)))) return;
-    result.events.push({ second: Math.round((performance.now() - started) / 1000), channel, text });
-    if (/<(?:red|gray|yellow|aqua|gold|\/)|\u00a7/.test(text)) fatal = 'Unparsed formatting in plugin output.';
+    const accepted = classifyEvent(channel, clean(raw));
+    if (!accepted) return;
+    // Store only exact allowed text; malformed matching output fails without raw chat.
+    result.events.push({ second: Math.round((performance.now() - started) / 1000), channel, text: accepted.text });
+    if (accepted.malformed) fatal = 'Unparsed formatting in plugin output.';
     save();
   }
   function close() {
@@ -166,5 +176,5 @@ async function main() {
   } catch (error) { result.outcome = 'FAIL'; result.error = clean(error.message); process.exitCode = 1; }
   finally { close(); clearTimeout(watchdog); process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); result.finishedAt = new Date().toISOString(); save(); console.log('Evidence: ' + output + ' (' + result.outcome + ')'); }
 }
-module.exports = { parseTime, loginPacket, idleVerdict, EXPECTED };
+module.exports = { parseTime, loginPacket, idleVerdict, classifyEvent, EXPECTED };
 if (require.main === module) main().catch(() => { console.error('Cannot start validation: check credentials, port, output path and dependency setup.'); process.exitCode = 1; });

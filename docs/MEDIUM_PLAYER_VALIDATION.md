@@ -18,7 +18,7 @@ location before invocation; the runner performs no movement, combat, interaction
 world edits or inventory actions and disables simulated physics after spawn.
 
 Confirm enforcement remains disabled, AFK AUTO uses the 300-second built-in timer,
-and the 5/10/15-minute reminders and `Ninja6 Â» ` prefix match Medium. EssentialsX
+and the 5/10/15-minute reminders and `Ninja6 Ã‚» ` prefix match Medium. EssentialsX
 is absent on Medium. A different configuration requires review of the runner's
 expectations, not changing the production configuration to make it pass.
 
@@ -77,7 +77,7 @@ Read-only `/spulse time` every 30 seconds supplies activity. Alias responses and
 another-player time-query denial exercise ordinary-player commands without risking
 reload/reset if the account unexpectedly has administrative access. Two independent
 480-second idle spans send no commands, chat or input. Since a time query resets
-activity and results are whole truncated minutes, each span expects 4â€“6 credited
+activity and results are whole truncated minutes, each span expects 4Ã¢â‚¬â€œ6 credited
 minutes around the 300-second threshold, not zero. The separate resumed-active
 phase must then increase time. Moving currents or other external input invalidate
 the idle assumption; investigate failures rather than weakening the checks.
