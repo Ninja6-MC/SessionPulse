@@ -103,3 +103,5 @@ Offline regression checks require Node, Java 17 or newer on PATH, and the existi
 $env:BOT_MODULE_ROOT = "C:/path/to/node_modules"
 node --test scripts/tests/medium-player-validation.test.cjs scripts/tests/nbt-utf8-reader.test.cjs
 ```
+
+Reconnect validation waits 65 seconds after disconnect before authenticating again, honoring Medium AuthMe's existing login rate floor. Allow approximately 26 minutes for the full run; the 30-minute watchdog remains in place. Do not change authentication settings to shorten this wait.

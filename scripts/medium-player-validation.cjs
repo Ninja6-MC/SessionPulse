@@ -177,7 +177,7 @@ async function main() {
     });
     await check('Reconnect retains time without replay', async () => {
       const before = await query(), since = result.events.length;
-      close(); await delay(3); await connect(); const after = await query(); await delay(12);
+      close(); await delay(65); await connect(); const after = await query(); await delay(12);
       assert(after.minutes >= before.minutes && after.minutes <= before.minutes + 1, 'Window changed across reconnect.');
       assert(!hasMilestoneReplay(result.events.slice(since)), 'Earlier milestone replayed.');
       return { before, after, secondsObserved: 12, limitation: 'Join/leave only; no server restart.' };
