@@ -13,7 +13,7 @@ Every release follows `MAJOR.MINOR.PATCH[-PRERELEASE]`:
 * **Pre-releases**:
   * `v1.0.0-alpha.1` (Internal experimental builds)
   * `v1.0.0-beta.1` (Public feature-complete testing builds)
-  * `v1.0.0-rc.1` (Release candidate)
+  * `v1.0.0-rc.1` (Release candidate; `1.0.0` and later only)
 
 **Before 1.0.0, every release is a pre-release.** Alphas are for internal testing and
 betas for public testing; `1.0.0` is the first stable release. Alphas are still public:
@@ -22,6 +22,11 @@ marked unstable and hidden by default, and reaches Modrinth's *alpha* channel on
 Modrinth project is approved. Do not push an unsuffixed tag below `v1.0.0`: `release.yml`
 publishes every unsuffixed tag as a stable release, as *Latest* on GitHub and on the
 *release* channel of Modrinth and Hangar.
+
+**Do not tag a release candidate below `v1.0.0`.** An `-rc.N` tag promises that the same
+bytes become the unsuffixed release, and below `v1.0.0` that release can never be cut. Use
+`-alpha.N` and `-beta.N` until then; the first release candidate is `v1.0.0-rc.1`.
+`v0.1.0-rc.1` was published before this rule and stays as it is.
 
 ---
 
@@ -62,7 +67,7 @@ there is no separate release branch.
 | Tier | Git Tag Pattern | Source Branch | Stability Level | Published Channels |
 | :--- | :--- | :--- | :--- | :--- |
 | **Alpha** | `vX.Y.Z-alpha.N` | `main` | Experimental | GitHub Releases (*Pre-release*), Modrinth (*alpha*), Paper Hangar (*Alpha*) |
-| **Beta / RC** | `vX.Y.Z-beta.N`, `vX.Y.Z-rc.N` | `main` | Feature-Complete | GitHub Releases (*Pre-release*), Modrinth (*beta*), Paper Hangar (*Beta*) |
+| **Beta / RC** | `vX.Y.Z-beta.N`, `vX.Y.Z-rc.N` (X >= 1) | `main` | Feature-Complete | GitHub Releases (*Pre-release*), Modrinth (*beta*), Paper Hangar (*Beta*) |
 | **Market (GA)** | `vX.Y.Z` | `main` | Production Stable | GitHub Releases (*Latest*), Modrinth (*release*), Paper Hangar (*Release*), SpigotMC (*manual*) |
 
 Notes on the table:
