@@ -185,6 +185,13 @@ registry secrets. Never approve a deployment from automation.
 | `MODRINTH_TOKEN` | Modrinth lookup and upload | `USER_READ` and `PROJECT_READ` for the read-only owner/project preflight, plus `VERSION_CREATE` for upload; token owner must have accepted upload permission on SessionPulse |
 | `HANGAR_API_TOKEN` | Hangar lookup, version upload and page sync | Key covering SessionPulse, owned by a project member, with `create_version`, `edit_page` |
 
+Before the first public write, the anonymous Modrinth project response must have
+`status: approved`, as defined by the
+[project API schema](https://docs.modrinth.com/api/operations/getproject/). HTTP 200
+alone is insufficient: withheld, unlisted and other nonapproved states stop promotion,
+even when `requested_status` is `approved`. Resolve project review before retrying;
+do not change registry visibility or submit approval from the publisher.
+
 Before the first public write, preflight verifies the Modrinth token owner and their
 project upload permission, and checks both Hangar API-key permission bits and the
 owner's project permissions. A Modrinth PAT's `VERSION_CREATE` scope has no supported
