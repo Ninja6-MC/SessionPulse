@@ -1,0 +1,8 @@
+name: SessionPulseAcceptanceProbe
+version: '1.0'
+main: com.ninja6.sessionpulse.fixture.EssentialsAcceptanceProbe
+api-version: '1.21'
+depend: [SessionPulse, Essentials]
+commands:
+  spxfixture:
+    description: Console-only disposable acceptance sampling
