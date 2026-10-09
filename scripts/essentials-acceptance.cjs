@@ -12,6 +12,10 @@ const sha = file => crypto.createHash('sha256').update(fs.readFileSync(file)).di
 function boundedGrowth(before, after, elapsed, tolerance = 4) {
   return after - before >= elapsed - tolerance && after - before <= elapsed + tolerance;
 }
+function essentialsWarning(line) {
+  const plain = line.replace(/\u001b\[[0-9;]*m/g, '');
+  return plain.includes('[Essentials] You are running an unsupported server version!');
+}
 function fixtureText(text) {
   return /^SPX[AB]:(ONE|TWO|You do not have permission to do that\.|Your counted window: [0-9]+\.[0-9]h \([0-9]+ min\)\. Lifetime: [0-9]+\.[0-9]h\.)$/.test(text);
 }
@@ -78,7 +82,7 @@ async function main() {
         const line = pending.slice(0, newline); pending = pending.slice(newline + 1);
         if (line.includes('Done (')) ready = true;
         if (line.includes('Loading Paper ') || line.includes('This server is running CraftBukkit version') || line.includes('This server is running Spigot version')) result.observedServerBanner = line.trim();
-        if (line.includes('[Essentials] You are running an unsupported server version!') && !result.warnings.includes('EssentialsX reports this server version unsupported.')) result.warnings.push('EssentialsX reports this server version unsupported.');
+        if (essentialsWarning(line) && !result.warnings.includes('EssentialsX reports this server version unsupported.')) result.warnings.push('EssentialsX reports this server version unsupported.');
         if (line.includes('SPX_FIXTURE_ERROR')) fatal = 'Probe error; see isolated log.';
         const at = line.indexOf('SPX_SAMPLE ');
         if (at >= 0) result.samples.push({ run, second: Math.round((Date.now() - started) / 1000), ...JSON.parse(line.slice(at + 11)) });
@@ -193,5 +197,5 @@ async function main() {
   } catch (error) { result.status = 'FAIL'; result.error = error.message; process.exitCode = 1; }
   finally { clearTimeout(watchdog); process.removeListener('SIGINT', interrupt); process.removeListener('SIGTERM', interrupt); await disconnect(); await stop(); result.durationSeconds = Math.round((Date.now() - started) / 1000); save(); log.end(); console.log('Evidence: ' + output + ' (' + result.status + ')'); }
 }
-module.exports = { boundedGrowth, config, fixtureText };
+module.exports = { boundedGrowth, config, fixtureText, essentialsWarning };
 if (require.main === module) main().catch(error => { console.error(error.message); process.exitCode = 1; });
