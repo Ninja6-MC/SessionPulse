@@ -308,7 +308,7 @@ jobs:
           MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
           SHA: ${{ needs.candidate.outputs.sha }}
           PROJECT: ${{ vars.MODRINTH_PROJECT || 'sessionpulse' }}
-        run: python3 scripts/release-destination.py modrinth --project "$PROJECT" --directory candidate --evidence evidence.json --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT" --require-public-project --require-modrinth-upload-access
+        run: python3 scripts/release-destination.py modrinth --project "$PROJECT" --directory candidate --evidence evidence.json --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT" --require-public-project --require-modrinth-upload-access --allow-sessionpulse-unlisted-beta
       - name: Preflight Hangar before publication
         id: hangar_preflight
         env:
@@ -401,8 +401,9 @@ jobs:
           RELEASE_ABSENCE_RECONCILIATION: ${{ vars.RELEASE_ABSENCE_RECONCILIATION }}
           MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
           SHA: ${{ needs.candidate.outputs.sha }}
+          VISIBILITY_RETRIES: ${{ steps.modrinth.outputs.state == 'absent' && '6' || '0' }}
           PROJECT: ${{ vars.MODRINTH_PROJECT || 'sessionpulse' }}
-        run: python3 scripts/release-destination.py modrinth --project "$PROJECT" --directory candidate --evidence evidence.json --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT" --require-complete
+        run: python3 scripts/release-destination.py modrinth --project "$PROJECT" --directory candidate --evidence evidence.json --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT" --require-complete --modrinth-visibility-retries "$VISIBILITY_RETRIES"
       - name: Check Hangar destination
         id: hangar
         env:
