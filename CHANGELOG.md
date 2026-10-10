@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0-beta.1]
+
+### Added
+- Minecraft 26.3 support on Paper and Spigot, using the same plugin JAR as older
+  supported servers. Minecraft 26.3 servers require Java 25; the plugin remains
+  compiled for Java 21. Folia support remains Minecraft 1.20.4 through 1.21.11.
+
 ## [0.1.0]
 
 ### Added
