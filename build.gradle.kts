@@ -131,7 +131,7 @@ dependencies {
     // A real protocol client for the smoke test, pinned to the one server version it
     // speaks. A SNAPSHOT, so it can drift under us: when a smoke leg goes red on a bot
     // decode error rather than an assertion, suspect this line before the plugin.
-    "botClientImplementation"("org.geysermc.mcprotocollib:protocol:1.21.11-SNAPSHOT")
+    "botClientImplementation"("org.geysermc.mcprotocollib:protocol:26.3-SNAPSHOT")
     // Separate classpath: both fixtures share the probe source, never the protocol library.
     "botClient26Implementation"("org.geysermc.mcprotocollib:protocol:26.3-SNAPSHOT")
 }
