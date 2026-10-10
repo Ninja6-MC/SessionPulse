@@ -183,7 +183,7 @@ registry secrets. Never approve a deployment from automation.
 
 | Environment secret | Used by | Required scope |
 | :--- | :--- | :--- |
-| `MODRINTH_TOKEN` | Modrinth lookup and upload | `USER_READ` and `PROJECT_READ` for the read-only owner/project preflight, plus `VERSION_CREATE` for upload; token owner must have accepted upload permission on SessionPulse |
+| `MODRINTH_TOKEN` | Modrinth lookup and upload | `PROJECT_READ` and `VERSION_READ` for authenticated lookup, plus `VERSION_CREATE` for upload; Modrinth enforces the token owner's effective project permissions when uploading |
 | `HANGAR_API_TOKEN` | Hangar lookup, version upload and page sync | Key covering SessionPulse, owned by a project member, with `create_version`, `edit_page` |
 
 Before the first public write, the anonymous Modrinth project response normally
@@ -193,7 +193,9 @@ A temporary `--allow-sessionpulse-unlisted-beta` exception is restricted to
 `v0.2.0-beta.1`, beta channel, project ID `3fjmIZYU` and slug `sessionpulse`.
 Only anonymously accessible `unlisted` or `withheld` project responses qualify;
 processing, draft, rejected and unknown statuses still stop promotion. The flag
-requires the project and upload-access preflights together. It does not change
+requires the anonymous project preflight. Upload authorization is enforced by
+Modrinth, including organization-inherited permissions; no separate user or
+team-membership lookup is performed. It does not change
 project visibility, request moderation approval, relax registry inventory
 reconciliation, or treat unlisted **versions** as complete. Once the project
 reports `approved`, the normal policy applies immediately; remove the temporary
@@ -209,12 +211,11 @@ candidate, bind new evidence and inventory reconciliation to its source/run,
 and wait for maintainer approval again. Existing candidate receipts cannot be
 reused to claim that the new source passed.
 
-Before the first public write, preflight verifies the Modrinth token owner and their
-project upload permission, and checks both Hangar API-key permission bits and the
-owner's project permissions. A Modrinth PAT's `VERSION_CREATE` scope has no supported
-read-only introspection endpoint; the actual upload remains the definitive test.
-Rotate an existing Modrinth PAT if it lacks the new read scopes, while retaining
-`VERSION_CREATE`. Do not use a write probe to test that scope.
+Before the first public write, preflight checks both Hangar API-key permission bits
+and the owner's project permissions. Modrinth enforces its token scopes and effective
+project upload permission during version creation. A Modrinth PAT's `VERSION_CREATE`
+scope has no supported read-only introspection endpoint; the actual upload remains
+the definitive test. Do not use a write probe to test that scope.
 
 A Hangar API key holding only `create_version` still uploads the version, but Hangar
 rejects the page sync that follows. That fails the job whenever the page text changed;

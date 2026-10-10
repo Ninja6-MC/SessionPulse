@@ -19,7 +19,7 @@ class ReleasePreflightOrderTest(unittest.TestCase):
         ):
             self.assertLess(publish.index(f"      - name: {step}"), first_write, step)
         self.assertIn("--require-public-project", publish[:first_write])
-        self.assertIn("--require-modrinth-upload-access", publish[:first_write])
+        self.assertNotIn("--require-modrinth-upload-access", publish)
         self.assertIn("--allow-sessionpulse-unlisted-beta", publish[:first_write])
         final_modrinth = publish.split("      - name: Verify Modrinth consumer download", 1)[1].split("      - name: Check Hangar destination", 1)[0]
         self.assertIn("steps.modrinth.outputs.state == 'absent'", final_modrinth)
