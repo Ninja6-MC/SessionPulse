@@ -187,6 +187,44 @@ def require_public_modrinth_project(project, manifest=None, allow_unlisted=False
     raise ValueError("Modrinth project is not approved; resolve project review before publication")
 
 
+def check_hangar_metadata(version, manifest, directory, audience):
+    """Compare candidate identity, not audience-dependent registry decoration."""
+    if not isinstance(version, dict):
+        raise ValueError(f"{audience} Hangar version response is invalid")
+    jar = f"SessionPulse-{manifest['version']}.jar"
+    downloads = version.get("downloads") or {}
+    if not isinstance(downloads, dict):
+        raise ValueError(f"{audience} Hangar downloads response is invalid")
+    download = downloads.get("PAPER") or {}
+    if not isinstance(download, dict):
+        raise ValueError(f"{audience} Hangar PAPER download response is invalid")
+    info = download.get("fileInfo") or {}
+    channel = version.get("channel") or {}
+    if not isinstance(info, dict) or not isinstance(channel, dict):
+        raise ValueError(f"{audience} Hangar file or channel response is invalid")
+    notes = version.get("description")
+    digest = info.get("sha256Hash")
+    checks = {
+        "visibility": version.get("visibility") == "public",
+        "version": version.get("name") == manifest["version"],
+        "channel": channel.get("name") == manifest["hangar_channel"],
+        # Hangar's publisher trims the boundary whitespace before uploading notes.
+        "release notes": isinstance(notes, str) and notes.strip() == (directory / "release-notes.md").read_text().strip(),
+        "platform inventory": set(downloads) == {"PAPER"},
+        "filename": info.get("name") == jar,
+        "SHA-256": isinstance(digest, str) and digest.lower() == manifest["files"][jar],
+    }
+    for field, matches in checks.items():
+        if not matches:
+            if field == "visibility":
+                raise ValueError(f"{audience} Hangar version is not public or not anonymously accessible")
+            raise ValueError(f"{audience} Hangar {field} conflicts with candidate")
+    file_url = download.get("downloadUrl")
+    if not isinstance(file_url, str) or not file_url.startswith("https://hangarcdn.papermc.io/"):
+        raise ValueError(f"{audience} Hangar file URL is not a Hangar CDN URL")
+    return file_url
+
+
 def hangar(manifest, project, directory):
     headers = hangar_session()
     url = f"https://hangar.papermc.io/api/v1/projects/{urllib.parse.quote(project, safe='')}/versions/{urllib.parse.quote(manifest['version'], safe='')}"
@@ -194,25 +232,12 @@ def hangar(manifest, project, directory):
     if status == 404:
         return reconciled_absence(manifest, "hangar", project)
     if status == 200:
-        if version.get("visibility") != "public":
-            raise ValueError("Existing Hangar version is not public")
+        check_hangar_metadata(version, manifest, directory, "Authenticated")
         public_status, public_version = request(url)
-        fields = ("name", "visibility", "channel", "description", "downloads", "platformDependencies", "pluginDependencies")
-        if public_status != 200 or not isinstance(public_version, dict) or any(public_version.get(key) != version.get(key) for key in fields):
-            raise ValueError("Hangar version is not anonymously accessible with matching metadata")
+        if public_status != 200:
+            raise ValueError("Hangar version is not anonymously accessible")
+        file_url = check_hangar_metadata(public_version, manifest, directory, "Anonymous")
         jar = f"SessionPulse-{manifest['version']}.jar"
-        download = version.get("downloads", {}).get("PAPER", {})
-        info = download.get("fileInfo") or {}
-        if (version.get("name") != manifest["version"]
-                or (version.get("channel") or {}).get("name") != manifest["hangar_channel"]
-                or version.get("description", "").rstrip("\n") != (directory / "release-notes.md").read_text().rstrip("\n")
-                or set(version.get("downloads", {})) != {"PAPER"}
-                or info.get("name") != jar
-                or info.get("sha256Hash", "").lower() != manifest["files"][jar]):
-            raise ValueError("Existing Hangar version metadata or digest conflicts with candidate")
-        file_url = download.get("downloadUrl")
-        if not file_url or not file_url.startswith("https://hangarcdn.papermc.io/"):
-            raise ValueError("Existing Hangar file URL is not a Hangar CDN URL")
         with urllib.request.urlopen(urllib.request.Request(file_url, headers={"User-Agent": "SessionPulse-release"}), timeout=60) as response:
             published = hashlib.sha256(response.read()).hexdigest()
         if published != manifest["files"][jar]:

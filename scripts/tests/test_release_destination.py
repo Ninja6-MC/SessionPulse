@@ -1,5 +1,6 @@
 import importlib.util
 import base64
+import copy
 import hashlib
 import io
 import json
@@ -417,6 +418,55 @@ class ReleaseDestinationTest(unittest.TestCase):
             destination.hangar({**MANIFEST, "hangar_channel": "Beta"}, "SessionPulse", self.directory)
         with patch.dict(destination.os.environ, {"RELEASE_ABSENCE_RECONCILIATION": json.dumps(self.absence_record("hangar", "SessionPulse"))}):
             self.assertEqual(destination.hangar({**MANIFEST, "hangar_channel": "Beta"}, "SessionPulse", self.directory), "absent")
+
+    @patch.object(destination.urllib.request, "urlopen")
+    @patch.object(destination, "request")
+    def test_hangar_incidental_metadata_differences_do_not_block_public_candidate(self, request, urlopen):
+        (self.directory / "release-notes.md").write_text("\nNotes\n\n")
+        authenticated = self.hangar_version()
+        authenticated["channel"].update({"color": "#yellow", "flags": ["a", "b"]})
+        authenticated["pluginDependencies"] = {"PAPER": [{"name": "a"}, {"name": "b"}]}
+        public = copy.deepcopy(authenticated)
+        public["channel"].update({"color": "#orange", "flags": ["b", "a"]})
+        public["pluginDependencies"]["PAPER"].reverse()
+        public["platformDependencies"] = {"PAPER": ["26.3", "1.21.11"]}
+        public["downloads"]["PAPER"]["downloadUrl"] = "https://hangarcdn.papermc.io/public.jar"
+        request.side_effect = [(200, authenticated), (200, public)]
+        urlopen.return_value.__enter__.return_value = io.BytesIO(b"candidate")
+        self.assertEqual(destination.hangar({**MANIFEST, "hangar_channel": "Beta"}, "SessionPulse", self.directory), "complete")
+        self.assertEqual(urlopen.call_args.args[0].full_url, "https://hangarcdn.papermc.io/public.jar")
+        self.assertNotIn("Authorization", urlopen.call_args.args[0].headers)
+
+    @patch.object(destination.urllib.request, "urlopen")
+    @patch.object(destination, "request")
+    def test_hangar_essential_conflicts_stop_before_download_for_either_audience(self, request, urlopen):
+        cases = (("name", "wrong", "version"), ("channel", {"name": "Alpha"}, "channel"),
+                 ("description", "wrong", "release notes"), ("visibility", "hidden", "not public"),
+                 ("downloads", {}, "platform inventory"))
+        for audience in (0, 1):
+            for key, value, message in cases:
+                with self.subTest(audience=audience, key=key):
+                    versions = [self.hangar_version(), self.hangar_version()]
+                    versions[audience][key] = value
+                    request.side_effect = [(200, item) for item in versions]
+                    with self.assertRaisesRegex(ValueError, message):
+                        destination.hangar({**MANIFEST, "hangar_channel": "Beta"}, "SessionPulse", self.directory)
+                    urlopen.assert_not_called()
+            for key, value, message in (("name", "wrong.jar", "filename"), ("sha256Hash", "b" * 64, "SHA-256")):
+                versions = [self.hangar_version(), self.hangar_version()]
+                versions[audience]["downloads"]["PAPER"]["fileInfo"][key] = value
+                request.side_effect = [(200, item) for item in versions]
+                with self.assertRaisesRegex(ValueError, message):
+                    destination.hangar({**MANIFEST, "hangar_channel": "Beta"}, "SessionPulse", self.directory)
+                urlopen.assert_not_called()
+
+    @patch.object(destination.urllib.request, "urlopen")
+    @patch.object(destination, "request")
+    def test_hangar_public_bytes_are_verified_independently_of_metadata(self, request, urlopen):
+        request.side_effect = [(200, self.hangar_version()), (200, self.hangar_version())]
+        urlopen.return_value.__enter__.return_value = io.BytesIO(b"wrong")
+        with self.assertRaisesRegex(ValueError, "JAR bytes conflict"):
+            destination.hangar({**MANIFEST, "hangar_channel": "Beta"}, "SessionPulse", self.directory)
 
     @patch.object(destination, "request")
     def test_modrinth_nonpublic_status_never_counts_as_complete(self, request):
