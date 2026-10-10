@@ -126,12 +126,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/release-destination.py github --directory candidate --evidence evidence.json --tag "$RELEASE_TAG" --sha "$SOURCE_SHA" --run-id "$CANDIDATE_RUN_ID" --attempt "$CANDIDATE_ATTEMPT" --require-complete
       - name: Validate Gradle wrapper
-        uses: gradle/actions/wrapper-validation@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        uses: gradle/actions/wrapper-validation@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
       - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           java-version: '21'
           distribution: temurin
-      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
       - name: Require release environment key
         env:
           HANGAR_API_TOKEN: ${{ secrets.HANGAR_API_TOKEN }}
