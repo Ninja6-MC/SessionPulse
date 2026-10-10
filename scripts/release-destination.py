@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -110,6 +111,10 @@ def github(directory, manifest, repo):
     return "complete"
 
 
+class ModrinthVisibilityPending(ValueError):
+    """A listed version has not propagated to anonymous consumers yet."""
+
+
 def modrinth(manifest, project, directory):
     token = os.environ.get("MODRINTH_TOKEN")
     if not token:
@@ -126,10 +131,6 @@ def modrinth(manifest, project, directory):
     version = found[0]
     if version.get("status") != "listed" or not version.get("id"):
         raise ValueError("Existing Modrinth version is not a listed public release")
-    public_status, public_version = request("https://api.modrinth.com/v2/version/" + urllib.parse.quote(version["id"], safe=""))
-    fields = ("id", "project_id", "version_number", "version_type", "status", "changelog", "files", "loaders", "game_versions", "dependencies")
-    if public_status != 200 or not isinstance(public_version, dict) or any(public_version.get(key) != version.get(key) for key in fields):
-        raise ValueError("Modrinth version is not anonymously accessible with matching metadata")
     jar = f"SessionPulse-{manifest['version']}.jar"
     files = found[0].get("files", [])
     if found[0].get("version_type") != manifest["channel"] or len(files) != 1 or files[0].get("filename") != jar:
@@ -139,6 +140,12 @@ def modrinth(manifest, project, directory):
     file_url = files[0].get("url")
     if not file_url or not file_url.startswith("https://cdn.modrinth.com/"):
         raise ValueError("Existing Modrinth file URL is not a Modrinth CDN URL")
+    public_status, public_version = request("https://api.modrinth.com/v2/version/" + urllib.parse.quote(version["id"], safe=""))
+    fields = ("id", "project_id", "version_number", "version_type", "status", "changelog", "files", "loaders", "game_versions", "dependencies")
+    if public_status == 404:
+        raise ModrinthVisibilityPending("Modrinth version is not anonymously accessible yet")
+    if public_status != 200 or not isinstance(public_version, dict) or any(public_version.get(key) != version.get(key) for key in fields):
+        raise ValueError("Modrinth version is not anonymously accessible with matching metadata")
     with urllib.request.urlopen(urllib.request.Request(file_url, headers={"User-Agent": "SessionPulse-release"}), timeout=60) as response:
         published = hashlib.sha256(response.read()).hexdigest()
     if published != manifest["files"][jar]:
@@ -146,15 +153,38 @@ def modrinth(manifest, project, directory):
     return "complete"
 
 
-def require_public_modrinth_project(project):
+def verify_modrinth_download(manifest, project, directory, retries=0):
+    for attempt in range(retries + 1):
+        try:
+            state = modrinth(manifest, project, directory)
+            if state == "complete":
+                return state
+            raise ModrinthVisibilityPending("Modrinth uploaded version is not visible in the version list yet")
+        except ModrinthVisibilityPending:
+            if attempt == retries:
+                raise
+            time.sleep(20)
+
+
+def require_public_modrinth_project(project, manifest=None, allow_unlisted=False):
     url = f"https://api.modrinth.com/v2/project/{urllib.parse.quote(project, safe='')}"
     status, public_project = request(url)
     if status != 200 or not isinstance(public_project, dict) or not public_project.get("id"):
         raise ValueError("Modrinth project is not anonymously accessible; resolve project review before publication")
     # The project status enum is documented at https://docs.modrinth.com/api/operations/getproject/.
     # Anonymous accessibility alone can include withheld or unlisted projects.
-    if public_project.get("status") != "approved":
-        raise ValueError("Modrinth project is not approved; resolve project review before publication")
+    if public_project.get("status") == "approved":
+        return
+    # Temporary, explicit exception for the next tested beta; all other tags stay strict.
+    if (allow_unlisted and manifest and manifest.get("tag") == "v0.2.0-beta.1"
+            and manifest.get("version") == "0.2.0-beta.1" and manifest.get("channel") == "beta"
+            and project in ("sessionpulse", "3fjmIZYU")
+            and public_project.get("id") == "3fjmIZYU"
+            and public_project.get("slug") == "sessionpulse"
+            and public_project.get("status") in ("unlisted", "withheld")):
+        print("Modrinth: temporary unlisted-project exception for v0.2.0-beta.1")
+        return
+    raise ValueError("Modrinth project is not approved; resolve project review before publication")
 
 
 def require_modrinth_upload_access(project):
@@ -272,10 +302,17 @@ def main():
     parser.add_argument("--require-complete", action="store_true")
     parser.add_argument("--require-absent", action="store_true")
     parser.add_argument("--require-public-project", action="store_true")
+    parser.add_argument("--allow-sessionpulse-unlisted-beta", action="store_true")
+    parser.add_argument("--modrinth-visibility-retries", type=int, choices=range(0, 7), default=0)
     parser.add_argument("--require-modrinth-upload-access", action="store_true")
     parser.add_argument("--require-hangar-target", action="store_true")
     parser.add_argument("--require-hangar-upload-access", action="store_true")
     args = parser.parse_args()
+    if args.allow_sessionpulse_unlisted_beta and (args.destination != "modrinth"
+            or not args.require_public_project or not args.require_modrinth_upload_access):
+        raise ValueError("Temporary Modrinth exception requires project and upload-access preflight")
+    if args.modrinth_visibility_retries and (args.destination != "modrinth" or not args.require_complete):
+        raise ValueError("Modrinth visibility retries require final consumer verification")
     candidate.check_evidence(args)
     manifest = candidate.verify(args)
     if tag_sha(args.tag) != manifest["source_sha"]:
@@ -286,9 +323,10 @@ def main():
     elif args.destination == "github":
         state = github(directory, manifest, os.environ["GITHUB_REPOSITORY"])
     elif args.destination == "modrinth":
-        state = modrinth(manifest, args.project, directory)
+        state = (verify_modrinth_download(manifest, args.project, directory, args.modrinth_visibility_retries)
+                 if args.modrinth_visibility_retries else modrinth(manifest, args.project, directory))
         if args.require_public_project:
-            require_public_modrinth_project(args.project)
+            require_public_modrinth_project(args.project, manifest, args.allow_sessionpulse_unlisted_beta)
         if args.require_modrinth_upload_access:
             require_modrinth_upload_access(args.project)
     else:

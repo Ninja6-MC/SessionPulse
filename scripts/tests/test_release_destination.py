@@ -223,6 +223,94 @@ class ReleaseDestinationTest(unittest.TestCase):
                     destination.main()
 
     @patch.object(destination, "request")
+    def test_temporary_exception_is_explicit_and_candidate_and_project_bound(self, request):
+        manifest = {**MANIFEST, "tag": "v0.2.0-beta.1", "version": "0.2.0-beta.1"}
+        project = {"id": "3fjmIZYU", "slug": "sessionpulse", "status": "withheld"}
+        for status in ("withheld", "unlisted"):
+            request.return_value = (200, {**project, "status": status})
+            destination.require_public_modrinth_project("sessionpulse", manifest, True)
+            destination.require_public_modrinth_project("3fjmIZYU", manifest, True)
+            with self.assertRaisesRegex(ValueError, "not approved"):
+                destination.require_public_modrinth_project("sessionpulse", manifest)
+        for changed in ({"tag": "v0.2.0-beta.2"}, {"version": "0.2.0-beta.2"}, {"channel": "release"}):
+            request.return_value = (200, project)
+            with self.assertRaisesRegex(ValueError, "not approved"):
+                destination.require_public_modrinth_project("sessionpulse", {**manifest, **changed}, True)
+        for changed in ({"id": "different"}, {"slug": "different"}, {"status": "processing"},
+                        {"status": "draft"}, {"status": "rejected"}, {"status": None}):
+            request.return_value = (200, {**project, **changed})
+            with self.assertRaisesRegex(ValueError, "not approved"):
+                destination.require_public_modrinth_project("sessionpulse", manifest, True)
+        request.return_value = (200, project)
+        with self.assertRaisesRegex(ValueError, "not approved"):
+            destination.require_public_modrinth_project("another-project", manifest, True)
+        request.return_value = (404, None)
+        with self.assertRaisesRegex(ValueError, "not anonymously accessible"):
+            destination.require_public_modrinth_project("sessionpulse", manifest, True)
+        request.return_value = (200, {**project, "status": "approved"})
+        # Once approved, the normal policy handles every tag without the exception.
+        destination.require_public_modrinth_project("sessionpulse", MANIFEST, True)
+
+    @patch.object(destination.candidate, "check_evidence")
+    def test_cli_exception_cannot_skip_project_or_upload_access_preflight(self, check_evidence):
+        base = ["release-destination.py", "modrinth", "--project", "sessionpulse",
+                "--directory", str(self.directory), "--evidence", "evidence.json",
+                "--tag", MANIFEST["tag"], "--sha", MANIFEST["source_sha"],
+                "--run-id", "52", "--attempt", "1", "--allow-sessionpulse-unlisted-beta"]
+        for flags in ([], ["--require-public-project"], ["--require-modrinth-upload-access"]):
+            with patch.object(destination.sys, "argv", base + flags):
+                with self.assertRaisesRegex(ValueError, "requires project and upload-access"):
+                    destination.main()
+        check_evidence.assert_not_called()
+
+    @patch.object(destination.time, "sleep")
+    @patch.object(destination, "modrinth")
+    def test_postupload_missing_version_retries_but_never_returns_absent_success(self, modrinth, sleep):
+        modrinth.side_effect = ["absent", "complete"]
+        self.assertEqual(destination.verify_modrinth_download(MANIFEST, "sessionpulse", self.directory, 2), "complete")
+        sleep.assert_called_once_with(20)
+        modrinth.side_effect = ["absent"] * 3
+        with self.assertRaises(destination.ModrinthVisibilityPending):
+            destination.verify_modrinth_download(MANIFEST, "sessionpulse", self.directory, 2)
+
+    @patch.object(destination.time, "sleep")
+    @patch.object(destination.urllib.request, "urlopen")
+    @patch.object(destination, "request")
+    def test_final_download_retries_only_missing_anonymous_version(self, request, urlopen, sleep):
+        version = self.modrinth_version()
+        request.side_effect = [(200, [version]), (404, None), (200, [version]), (200, version)]
+        urlopen.return_value.__enter__.return_value = io.BytesIO(b"candidate")
+        self.assertEqual(destination.verify_modrinth_download(MANIFEST, "sessionpulse", self.directory, 2), "complete")
+        sleep.assert_called_once_with(20)
+        for public in ((200, {**version, "changelog": "wrong"}), (200, [])):
+            request.side_effect = [(200, [version]), public]
+            sleep.reset_mock()
+            with self.assertRaisesRegex(ValueError, "matching metadata"):
+                destination.verify_modrinth_download(MANIFEST, "sessionpulse", self.directory, 2)
+            sleep.assert_not_called()
+        request.side_effect = [(200, [version]), (200, version)]
+        urlopen.return_value.__enter__.return_value = io.BytesIO(b"wrong")
+        with self.assertRaisesRegex(ValueError, "bytes conflict"):
+            destination.verify_modrinth_download(MANIFEST, "sessionpulse", self.directory, 2)
+        sleep.assert_not_called()
+
+    @patch.object(destination.time, "sleep")
+    @patch.object(destination, "request")
+    def test_visibility_retries_exhaust_and_do_not_mask_auth_or_version_conflicts(self, request, sleep):
+        version = self.modrinth_version()
+        request.side_effect = [(200, [version]), (404, None)] * 3
+        with self.assertRaises(destination.ModrinthVisibilityPending):
+            destination.verify_modrinth_download(MANIFEST, "sessionpulse", self.directory, 2)
+        self.assertEqual(sleep.call_count, 2)
+        for response in ((401, None), (200, [self.modrinth_version("draft")]),
+                         (200, [{**version, "changelog": "wrong"}])):
+            request.side_effect = [response]
+            sleep.reset_mock()
+            with self.assertRaises(ValueError):
+                destination.verify_modrinth_download(MANIFEST, "sessionpulse", self.directory, 2)
+            sleep.assert_not_called()
+
+    @patch.object(destination, "request")
     def test_modrinth_upload_access_requires_owner_and_project_permission(self, request):
         project = {"id": "project-id", "slug": "sessionpulse"}
         member = {"user": {"id": "owner-id"}, "accepted": True, "permissions": 1}

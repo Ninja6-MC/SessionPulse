@@ -186,12 +186,28 @@ registry secrets. Never approve a deployment from automation.
 | `MODRINTH_TOKEN` | Modrinth lookup and upload | `USER_READ` and `PROJECT_READ` for the read-only owner/project preflight, plus `VERSION_CREATE` for upload; token owner must have accepted upload permission on SessionPulse |
 | `HANGAR_API_TOKEN` | Hangar lookup, version upload and page sync | Key covering SessionPulse, owned by a project member, with `create_version`, `edit_page` |
 
-Before the first public write, the anonymous Modrinth project response must have
-`status: approved`, as defined by the
-[project API schema](https://docs.modrinth.com/api/operations/getproject/). HTTP 200
-alone is insufficient: withheld, unlisted and other nonapproved states stop promotion,
-even when `requested_status` is `approved`. Resolve project review before retrying;
-do not change registry visibility or submit approval from the publisher.
+Before the first public write, the anonymous Modrinth project response normally
+requires `status: approved`, as defined by the
+[project API schema](https://docs.modrinth.com/api/operations/getproject/).
+A temporary `--allow-sessionpulse-unlisted-beta` exception is restricted to
+`v0.2.0-beta.1`, beta channel, project ID `3fjmIZYU` and slug `sessionpulse`.
+Only anonymously accessible `unlisted` or `withheld` project responses qualify;
+processing, draft, rejected and unknown statuses still stop promotion. The flag
+requires the project and upload-access preflights together. It does not change
+project visibility, request moderation approval, relax registry inventory
+reconciliation, or treat unlisted **versions** as complete. Once the project
+reports `approved`, the normal policy applies immediately; remove the temporary
+flag and exception code after approval.
+
+Merging this change does not update the source of an existing tagged run.
+Re-running the waiting `v0.2.0-beta.1` run uses its original workflow and guard.
+If keeping that version, the maintainer must first reconcile every registry's
+owner inventory and confirm it has never been published, cancel the old waiting
+run, and explicitly replace the unpublished tag with the reviewed corrected
+source. Never move a published tag. The new run must build and test a fresh
+candidate, bind new evidence and inventory reconciliation to its source/run,
+and wait for maintainer approval again. Existing candidate receipts cannot be
+reused to claim that the new source passed.
 
 Before the first public write, preflight verifies the Modrinth token owner and their
 project upload permission, and checks both Hangar API-key permission bits and the
@@ -277,7 +293,11 @@ with matching version, notes and channel, successful anonymous version lookup an
 matching anonymously downloaded CDN bytes. Draft, scheduled, archived, unlisted,
 new, needs-approval, hidden and soft-deleted versions require reconciliation.
 Retain the read permissions above when rotating tokens; authentication or lookup
-failure stops publication.
+failure stops publication. After a new Modrinth upload, final verification
+allows up to six retries, 20 seconds apart, only for a missing version or an
+anonymous version HTTP 404. Metadata conflicts, nonlisted version states, invalid
+responses, authentication failures and downloaded byte mismatches stop immediately.
+Existing-version preflight never retries or treats uncertain absence as success.
 
 A failed page sync after a successful Hangar upload can be retried: the matching
 version is verified and skipped, then the page sync runs again. Missing or expired
