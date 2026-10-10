@@ -179,9 +179,48 @@ class ReleaseDestinationTest(unittest.TestCase):
         request.return_value = (404, None)
         with self.assertRaisesRegex(ValueError, "not anonymously accessible"):
             destination.require_public_modrinth_project("sessionpulse")
-        request.return_value = (200, {"id": "project-id"})
+        request.return_value = (200, {"id": "project-id", "status": "approved"})
         destination.require_public_modrinth_project("sessionpulse")
         self.assertEqual(request.call_args.args[0], "https://api.modrinth.com/v2/project/sessionpulse")
+
+    @patch.object(destination, "request")
+    def test_preflight_rejects_every_nonapproved_modrinth_project_status(self, request):
+        for status in ("archived", "rejected", "draft", "unlisted", "processing", "withheld",
+                       "scheduled", "private", "unknown", "future-status", None, True, ["approved"]):
+            with self.subTest(status=status):
+                request.return_value = (200, {"id": "project-id", "status": status,
+                                               "requested_status": "approved"})
+                with self.assertRaisesRegex(ValueError, "project is not approved"):
+                    destination.require_public_modrinth_project("sessionpulse")
+        request.return_value = (200, {"id": "project-id", "requested_status": "approved"})
+        with self.assertRaisesRegex(ValueError, "project is not approved"):
+            destination.require_public_modrinth_project("sessionpulse")
+
+    @patch.object(destination, "request")
+    def test_preflight_rejects_malformed_anonymous_project_responses(self, request):
+        for response in ((404, None), (403, {}), (200, []), (200, {}),
+                         (200, {"status": "approved"}), (200, {"id": "", "status": "approved"})):
+            with self.subTest(response=response):
+                request.return_value = response
+                with self.assertRaisesRegex(ValueError, "not anonymously accessible"):
+                    destination.require_public_modrinth_project("sessionpulse")
+
+    @patch.object(destination, "tag_sha", return_value="a" * 40)
+    @patch.object(destination.candidate, "verify", return_value=MANIFEST)
+    @patch.object(destination.candidate, "check_evidence")
+    @patch.object(destination, "modrinth")
+    @patch.object(destination, "request", return_value=(200, {"id": "project-id", "status": "withheld"}))
+    def test_cli_preflight_rejects_withheld_project_for_new_upload_and_retry(self, request, modrinth,
+                                                                          check_evidence, verify, tag_sha):
+        args = ["release-destination.py", "modrinth", "--project", "sessionpulse",
+                "--directory", str(self.directory), "--evidence", "evidence.json",
+                "--tag", MANIFEST["tag"], "--sha", MANIFEST["source_sha"],
+                "--run-id", "52", "--attempt", "1", "--require-public-project"]
+        for state in ("absent", "complete"):
+            with self.subTest(state=state), patch.object(destination.sys, "argv", args):
+                modrinth.return_value = state
+                with self.assertRaisesRegex(ValueError, "project is not approved"):
+                    destination.main()
 
     @patch.object(destination, "request")
     def test_modrinth_upload_access_requires_owner_and_project_permission(self, request):

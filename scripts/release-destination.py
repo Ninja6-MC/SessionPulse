@@ -151,6 +151,10 @@ def require_public_modrinth_project(project):
     status, public_project = request(url)
     if status != 200 or not isinstance(public_project, dict) or not public_project.get("id"):
         raise ValueError("Modrinth project is not anonymously accessible; resolve project review before publication")
+    # The project status enum is documented at https://docs.modrinth.com/api/operations/getproject/.
+    # Anonymous accessibility alone can include withheld or unlisted projects.
+    if public_project.get("status") != "approved":
+        raise ValueError("Modrinth project is not approved; resolve project review before publication")
 
 
 def require_modrinth_upload_access(project):
