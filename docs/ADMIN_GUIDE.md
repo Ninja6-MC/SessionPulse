@@ -181,6 +181,11 @@ whenever EssentialsX is enabled or disabled while the server is running. The det
 force is named in the log each time it is resolved. The EssentialsX behaviour here was
 verified against EssentialsX 2.20.1.
 
+EssentialsX 2.22.0 logs an unsupported-server-version warning on Minecraft 26.3.
+SessionPulse AFK integration checks cover the hook behaviour described below; they
+do not establish compatibility for other EssentialsX features. Check EssentialsX's
+own guidance before upgrading a server that depends on it.
+
 | `tracking.afk.mode` | EssentialsX state | Who is treated as AFK |
 | --- | --- | --- |
 | `"OFF"` | any | Nobody. The clock never pauses. |

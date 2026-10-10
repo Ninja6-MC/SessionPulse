@@ -65,6 +65,11 @@ it is not tested.
 - **EssentialsX** is optional. Where it is installed, SessionPulse can use its AFK state;
   where it is not, a built-in idle timer is used instead.
 
+EssentialsX 2.22.0 logs an unsupported-server-version warning on Minecraft 26.3.
+SessionPulse's AFK integration tests do not establish support for other EssentialsX
+features on that version. Check EssentialsX's own compatibility guidance before
+upgrading a server that depends on it.
+
 ---
 
 ## Install
