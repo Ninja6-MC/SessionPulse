@@ -211,12 +211,11 @@ candidate, bind new evidence and inventory reconciliation to its source/run,
 and wait for maintainer approval again. Existing candidate receipts cannot be
 reused to claim that the new source passed.
 
-Before the first public write, preflight verifies the Modrinth token owner and their
-project upload permission, and checks both Hangar API-key permission bits and the
-owner's project permissions. A Modrinth PAT's `VERSION_CREATE` scope has no supported
-read-only introspection endpoint; the actual upload remains the definitive test.
-Rotate an existing Modrinth PAT if it lacks the new read scopes, while retaining
-`VERSION_CREATE`. Do not use a write probe to test that scope.
+Before the first public write, preflight checks both Hangar API-key permission bits
+and the owner's project permissions. Modrinth enforces its token scopes and effective
+project upload permission during version creation. A Modrinth PAT's `VERSION_CREATE`
+scope has no supported read-only introspection endpoint; the actual upload remains
+the definitive test. Do not use a write probe to test that scope.
 
 A Hangar API key holding only `create_version` still uploads the version, but Hangar
 rejects the page sync that follows. That fails the job whenever the page text changed;
