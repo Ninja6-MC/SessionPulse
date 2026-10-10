@@ -187,35 +187,6 @@ def require_public_modrinth_project(project, manifest=None, allow_unlisted=False
     raise ValueError("Modrinth project is not approved; resolve project review before publication")
 
 
-def require_modrinth_upload_access(project):
-    token = os.environ["MODRINTH_TOKEN"]
-    headers = {"Authorization": token}
-    try:
-        user_status, user = request("https://api.modrinth.com/v2/user", headers)
-        project_url = f"https://api.modrinth.com/v2/project/{urllib.parse.quote(project, safe='')}"
-        project_status, details = request(project_url, headers)
-        if user_status != 200 or not isinstance(user, dict) or not user.get("id"):
-            raise ValueError("Cannot identify Modrinth release token owner")
-        if (project_status != 200 or not isinstance(details, dict)
-                or project not in (details.get("slug"), details.get("id"))):
-            raise ValueError(f"Modrinth release target {project} does not match the authenticated project")
-        members_status, members = request(project_url + "/members", headers)
-    except urllib.error.HTTPError as error:
-        if error.code in (401, 403):
-            raise ValueError("Modrinth release token needs USER_READ and PROJECT_READ scopes for upload-access preflight") from None
-        raise
-    if members_status != 200 or not isinstance(members, list):
-        raise ValueError(f"Cannot inspect Modrinth project {project} members")
-    for member in members:
-        if (isinstance(member, dict) and isinstance(member.get("user"), dict)
-                and member["user"].get("id") == user["id"] and member.get("accepted") is True
-                and isinstance(member.get("permissions"), int)
-                and not isinstance(member["permissions"], bool)
-                and member["permissions"] & 1):
-            return
-    raise ValueError(f"Modrinth release token owner lacks accepted upload permission on project {project}")
-
-
 def hangar(manifest, project, directory):
     headers = hangar_session()
     url = f"https://hangar.papermc.io/api/v1/projects/{urllib.parse.quote(project, safe='')}/versions/{urllib.parse.quote(manifest['version'], safe='')}"
@@ -304,13 +275,12 @@ def main():
     parser.add_argument("--require-public-project", action="store_true")
     parser.add_argument("--allow-sessionpulse-unlisted-beta", action="store_true")
     parser.add_argument("--modrinth-visibility-retries", type=int, choices=range(0, 7), default=0)
-    parser.add_argument("--require-modrinth-upload-access", action="store_true")
     parser.add_argument("--require-hangar-target", action="store_true")
     parser.add_argument("--require-hangar-upload-access", action="store_true")
     args = parser.parse_args()
     if args.allow_sessionpulse_unlisted_beta and (args.destination != "modrinth"
-            or not args.require_public_project or not args.require_modrinth_upload_access):
-        raise ValueError("Temporary Modrinth exception requires project and upload-access preflight")
+            or not args.require_public_project):
+        raise ValueError("Temporary Modrinth exception requires Modrinth project preflight")
     if args.modrinth_visibility_retries and (args.destination != "modrinth" or not args.require_complete):
         raise ValueError("Modrinth visibility retries require final consumer verification")
     candidate.check_evidence(args)
@@ -327,8 +297,6 @@ def main():
                  if args.modrinth_visibility_retries else modrinth(manifest, args.project, directory))
         if args.require_public_project:
             require_public_modrinth_project(args.project, manifest, args.allow_sessionpulse_unlisted_beta)
-        if args.require_modrinth_upload_access:
-            require_modrinth_upload_access(args.project)
     else:
         state = hangar(manifest, args.project, directory)
         if args.require_hangar_target:

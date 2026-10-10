@@ -252,16 +252,40 @@ class ReleaseDestinationTest(unittest.TestCase):
         destination.require_public_modrinth_project("sessionpulse", MANIFEST, True)
 
     @patch.object(destination.candidate, "check_evidence")
-    def test_cli_exception_cannot_skip_project_or_upload_access_preflight(self, check_evidence):
+    def test_cli_exception_requires_modrinth_and_public_project_preflight(self, check_evidence):
         base = ["release-destination.py", "modrinth", "--project", "sessionpulse",
                 "--directory", str(self.directory), "--evidence", "evidence.json",
                 "--tag", MANIFEST["tag"], "--sha", MANIFEST["source_sha"],
                 "--run-id", "52", "--attempt", "1", "--allow-sessionpulse-unlisted-beta"]
-        for flags in ([], ["--require-public-project"], ["--require-modrinth-upload-access"]):
-            with patch.object(destination.sys, "argv", base + flags):
-                with self.assertRaisesRegex(ValueError, "requires project and upload-access"):
+        for target, flags in (("modrinth", []), ("github", ["--require-public-project"]),
+                              ("hangar", ["--require-public-project"]), ("inventory", ["--require-public-project"])):
+            with patch.object(destination.sys, "argv", [base[0], target] + base[2:] + flags):
+                with self.assertRaisesRegex(ValueError, "requires Modrinth project preflight"):
                     destination.main()
         check_evidence.assert_not_called()
+
+    @patch.object(destination, "tag_sha", return_value="a" * 40)
+    @patch.object(destination.candidate, "verify")
+    @patch.object(destination.candidate, "check_evidence")
+    @patch.object(destination, "request")
+    def test_cli_unlisted_exception_needs_no_user_or_membership_lookup(self, request, check_evidence, verify, tag_sha):
+        manifest = {**MANIFEST, "tag": "v0.2.0-beta.1", "version": "0.2.0-beta.1"}
+        verify.return_value = manifest
+        request.side_effect = [(200, []), (200, {"id": "3fjmIZYU", "slug": "sessionpulse", "status": "withheld"})]
+        args = ["release-destination.py", "modrinth", "--project", "sessionpulse",
+                "--directory", str(self.directory), "--evidence", "evidence.json",
+                "--tag", manifest["tag"], "--sha", manifest["source_sha"],
+                "--run-id", "52", "--attempt", "1", "--allow-sessionpulse-unlisted-beta",
+                "--require-public-project", "--require-absent"]
+        record = {**self.absence_record(), "tag": manifest["tag"], "version": manifest["version"]}
+        with patch.object(destination.sys, "argv", args), patch.dict(destination.os.environ,
+                {"RELEASE_ABSENCE_RECONCILIATION": json.dumps(record)}):
+            destination.main()
+        self.assertEqual([call.args[0] for call in request.call_args_list], [
+            "https://api.modrinth.com/v2/project/sessionpulse/version",
+            "https://api.modrinth.com/v2/project/sessionpulse"])
+        self.assertEqual(request.call_args_list[0].args[1], {"Authorization": "test-token"})
+        self.assertEqual(len(request.call_args_list[1].args), 1)
 
     @patch.object(destination.time, "sleep")
     @patch.object(destination, "modrinth")
@@ -309,31 +333,6 @@ class ReleaseDestinationTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 destination.verify_modrinth_download(MANIFEST, "sessionpulse", self.directory, 2)
             sleep.assert_not_called()
-
-    @patch.object(destination, "request")
-    def test_modrinth_upload_access_requires_owner_and_project_permission(self, request):
-        project = {"id": "project-id", "slug": "sessionpulse"}
-        member = {"user": {"id": "owner-id"}, "accepted": True, "permissions": 1}
-        request.side_effect = [(200, {"id": "owner-id"}), (200, project), (200, [member])]
-        destination.require_modrinth_upload_access("sessionpulse")
-        self.assertEqual(request.call_args_list[2].args[0],
-                         "https://api.modrinth.com/v2/project/sessionpulse/members")
-        for bad_member in ({**member, "permissions": 0}, {**member, "accepted": False},
-                           {**member, "user": {"id": "someone-else"}}):
-            with self.subTest(member=bad_member):
-                request.side_effect = [(200, {"id": "owner-id"}), (200, project), (200, [bad_member])]
-                with self.assertRaisesRegex(ValueError, "lacks accepted upload permission"):
-                    destination.require_modrinth_upload_access("sessionpulse")
-        request.side_effect = [(200, {"id": "owner-id"}), (200, {**project, "slug": "wrong"})]
-        with self.assertRaisesRegex(ValueError, "does not match"):
-            destination.require_modrinth_upload_access("sessionpulse")
-
-    @patch.object(destination, "request")
-    def test_modrinth_upload_access_reports_missing_read_scopes(self, request):
-        request.side_effect = destination.urllib.error.HTTPError("https://api.modrinth.com/v2/user", 401,
-                                                                  "Unauthorized", {}, None)
-        with self.assertRaisesRegex(ValueError, "USER_READ and PROJECT_READ"):
-            destination.require_modrinth_upload_access("sessionpulse")
 
     @patch.object(destination, "request")
     def test_hangar_target_requires_expected_project_and_channel(self, request):

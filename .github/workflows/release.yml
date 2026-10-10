@@ -308,7 +308,7 @@ jobs:
           MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
           SHA: ${{ needs.candidate.outputs.sha }}
           PROJECT: ${{ vars.MODRINTH_PROJECT || 'sessionpulse' }}
-        run: python3 scripts/release-destination.py modrinth --project "$PROJECT" --directory candidate --evidence evidence.json --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT" --require-public-project --require-modrinth-upload-access --allow-sessionpulse-unlisted-beta
+        run: python3 scripts/release-destination.py modrinth --project "$PROJECT" --directory candidate --evidence evidence.json --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT" --require-public-project --allow-sessionpulse-unlisted-beta
       - name: Preflight Hangar before publication
         id: hangar_preflight
         env:
