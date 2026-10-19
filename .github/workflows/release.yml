@@ -56,12 +56,12 @@ jobs:
             echo "prerelease=$PRE"
           } >> "$GITHUB_OUTPUT"
       - name: Validate Gradle wrapper
-        uses: gradle/actions/wrapper-validation@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
-      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        uses: gradle/actions/wrapper-validation@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           java-version: '21'
           distribution: temurin
-      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
       - name: Collect release notes
         env:
           VERSION: ${{ steps.vars.outputs.version }}
@@ -106,7 +106,7 @@ jobs:
         run: |
           python3 scripts/release-candidate.py create --directory candidate --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
       - name: Retain candidate
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-candidate-${{ github.run_id }}-${{ github.run_attempt }}
           path: candidate/
@@ -133,7 +133,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-candidate-${{ github.run_id }}-${{ needs.candidate.outputs.attempt }}
           path: candidate
@@ -142,18 +142,18 @@ jobs:
           SHA: ${{ needs.candidate.outputs.sha }}
         run: python3 scripts/release-candidate.py verify --directory candidate --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT"
       - name: Validate Gradle wrapper
-        uses: gradle/actions/wrapper-validation@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
-      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        uses: gradle/actions/wrapper-validation@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           java-version: '21'
           distribution: temurin
-      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
       - name: Build protocol test fixture
         run: |
           chmod +x ./gradlew
           ./gradlew ${{ matrix.fixture }} --no-daemon
       - name: Set up server runtime
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           java-version: ${{ matrix.java }}
           distribution: temurin
@@ -191,7 +191,7 @@ jobs:
           PLATFORM: ${{ matrix.platform }}
         run: python3 scripts/release-candidate.py receipt --directory candidate --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT" --platform "$PLATFORM" --smoke-evidence "run-$PLATFORM/evidence.json" --output "smoke-$PLATFORM-${{ matrix.minecraft }}.json"
       - name: Retain smoke receipt
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: smoke-${{ matrix.platform }}-${{ matrix.minecraft }}-${{ github.run_id }}-${{ needs.candidate.outputs.attempt }}
           path: smoke-${{ matrix.platform }}-${{ matrix.minecraft }}.json
@@ -199,7 +199,7 @@ jobs:
           retention-days: 30
       - name: Retain smoke logs
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-log-${{ matrix.platform }}-${{ matrix.minecraft }}-${{ github.run_id }}-${{ needs.candidate.outputs.attempt }}
           path: |
@@ -220,11 +220,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-candidate-${{ github.run_id }}-${{ needs.candidate.outputs.attempt }}
           path: candidate
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: smoke-*-${{ github.run_id }}-${{ needs.candidate.outputs.attempt }}
           path: receipts
@@ -254,7 +254,7 @@ jobs:
             python3 scripts/release-candidate.py reconciliation --directory candidate --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT" --modrinth-project "$MODRINTH_PROJECT" --hangar-project "$HANGAR_PROJECT"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-evidence-${{ github.run_id }}-${{ needs.candidate.outputs.attempt }}
           path: evidence.json
@@ -278,21 +278,21 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-candidate-${{ github.run_id }}-${{ needs.candidate.outputs.attempt }}
           path: candidate
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-evidence-${{ github.run_id }}-${{ needs.candidate.outputs.attempt }}
           path: .
       - name: Validate Gradle wrapper
-        uses: gradle/actions/wrapper-validation@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
-      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        uses: gradle/actions/wrapper-validation@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           java-version: '21'
           distribution: temurin
-      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
       - name: Require environment publishing tokens
         env:
           MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
