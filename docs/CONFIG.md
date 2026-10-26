@@ -133,8 +133,10 @@ The window resets only when the offline gap is strictly greater than this many h
 **`afk.mode`** — whether, and how, the counted window pauses for a player who has
 stopped playing. The Admin Guide has the full table of what each mode does with and
 without EssentialsX installed. In short: `AUTO` uses EssentialsX where it is usable and
-the built-in idle timer otherwise; `ESSENTIALS` requires EssentialsX and marks nobody
-without it; `BUILT_IN` always uses the idle timer; `"OFF"` never pauses. `"OFF"` is the
+the built-in idle timer otherwise; `ESSENTIALS` requires EssentialsX for idle detection;
+`BUILT_IN` always uses the idle timer; `"OFF"` never pauses. Every mode except `"OFF"`
+also pauses immediately on death until respawn or quit, including `ESSENTIALS` without
+EssentialsX. Respawning restarts the built-in idle timer. `"OFF"` is the
 wrong choice anywhere enforcement is on, because time spent away from the keyboard then
 counts towards the disconnect.
 

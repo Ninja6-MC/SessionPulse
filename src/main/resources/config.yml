@@ -40,7 +40,7 @@ tracking:
     #              and a manual /afk always counts. The default, and the only
     #              value that stays correct on a server whose plugin list
     #              changes later.
-    # ESSENTIALS - require EssentialsX. If it is absent, nobody is ever AFK.
+    # ESSENTIALS - require EssentialsX for idle detection.
     #              Said once in the log at startup rather than assumed.
     #              EssentialsX only marks players holding essentials.afk.auto
     #              on its own; everyone else is paused only by /afk.
@@ -49,6 +49,8 @@ tracking:
     # OFF        - never pause. A player who walks away accrues counted time.
     #              The honest choice on a server that would rather not guess,
     #              and the wrong one anywhere enforcement is on.
+    # Every mode except OFF also pauses immediately on death until respawn
+    # or quit, even when EssentialsX is absent.
     # Write OFF in quotes, as "OFF": YAML reads a bare OFF as false, which is
     # not a mode. An unrecognised value falls back to AUTO, named in the log.
     # The detector in use is named in the log at startup and on every reload,
@@ -57,8 +59,9 @@ tracking:
     # BUILT_IN, and AUTO wherever the idle timer applies: seconds without
     # input before a player is treated as idle. Input is moving into another
     # block, steering a vehicle other than a minecart, clicking, chatting or a
-    # command. Water streams, bubble columns and knockback look like walking
-    # and still count, so a player parked in a current never goes idle.
+    # command. Respawning restarts this timer. Water streams, bubble columns
+    # and knockback look like walking and still count, so a player parked in
+    # a current never goes idle.
     # Clamped to 30-3600. Below 30, reading a sign counts as going AFK; above
     # 3600 nobody is ever detected as idle before they log off anyway.
     idle-seconds: 300

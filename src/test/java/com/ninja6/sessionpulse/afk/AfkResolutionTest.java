@@ -96,7 +96,7 @@ class AfkResolutionTest {
 
         assertInstanceOf(EssentialsAfkDetector.class, resolve("ESSENTIALS"));
         assertOnlyLine(Level.WARNING,
-                "AFK detection: EssentialsX, but its auto-afk is disabled; only /afk will pause the clock.");
+                "AFK detection: EssentialsX, but its auto-afk is disabled; /afk and death screens pause the clock.");
     }
 
     @Test
@@ -104,7 +104,7 @@ class AfkResolutionTest {
     void essentialsMissing() {
         assertSame(NoOpAfkDetector.INSTANCE, resolve("ESSENTIALS"));
         assertOnlyLine(Level.WARNING, "AFK detection: tracking.afk.mode is ESSENTIALS but EssentialsX "
-                + "is not installed or not enabled; nobody will be treated as AFK.");
+                + "is not installed or not enabled; only death screens will pause the clock.");
     }
 
     @Test
@@ -116,7 +116,7 @@ class AfkResolutionTest {
 
         assertSame(NoOpAfkDetector.INSTANCE, resolve("ESSENTIALS"));
         assertOnlyLine(Level.WARNING, "AFK detection: tracking.afk.mode is ESSENTIALS and EssentialsX "
-                + "is installed but could not be bound; nobody will be treated as AFK.");
+                + "is installed but could not be bound; only death screens will pause the clock.");
         assertNotNull(log.records.get(0).getThrown(), "the cause is logged with the line");
     }
 

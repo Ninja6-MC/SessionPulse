@@ -6,7 +6,9 @@ import com.ninja6.sessionpulse.platform.Scheduler;
 import com.ninja6.sessionpulse.session.AfkGate;
 import org.bukkit.entity.Player;
 
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -14,8 +16,10 @@ import java.util.logging.Logger;
 /**
  * Holds the AFK detector in force, and decides which one that is.
  *
- * <p>The plugin hands this to the session tick as its {@link AfkGate}. Every tick reads
- * {@link #current()} afresh, so re-resolving publishes a new detector with no reschedule.
+ * <p>The plugin hands this to the session tick as its {@link AfkGate}. Every tick checks
+ * event-recorded death state in non-OFF modes, then the current idle detector, so
+ * re-resolving publishes a new detector with no reschedule. Only UUIDs are read from players
+ * on the global region; death and respawn are recorded by their event handlers.
  *
  * <h2>Resolution</h2>
  *
@@ -50,6 +54,8 @@ public final class AfkService implements AfkGate {
     private final Scheduler scheduler;
     private final Logger logger;
     private final Supplier<PluginConfig> config;
+    private final Set<UUID> deadPlayers = ConcurrentHashMap.newKeySet();
+    private volatile AfkMode mode = AfkMode.OFF;
 
     /**
      * volatile: published by {@link #resolve()} on the main thread, or by a reload on the
@@ -79,7 +85,19 @@ public final class AfkService implements AfkGate {
 
     @Override
     public boolean isAfk(Player player) {
-        return current.isAfk(player);
+        return (mode != AfkMode.OFF && deadPlayers.contains(player.getUniqueId()))
+                || current.isAfk(player);
+    }
+
+    /** Records death on the player's region; the global tick reads only the UUID record. */
+    public void markDead(UUID uuid) {
+        deadPlayers.add(uuid);
+    }
+
+    /** Restarts the idle timer before allowing a respawned player's clock to resume. */
+    public void respawn(UUID uuid) {
+        builtIn.markActive(uuid);
+        deadPlayers.remove(uuid);
     }
 
     /**
@@ -121,18 +139,21 @@ public final class AfkService implements AfkGate {
      * @param uuid the player who left
      */
     public void forget(UUID uuid) {
+        deadPlayers.remove(uuid);
         builtIn.forget(uuid);
         current.forget(uuid);
     }
 
     /** Publishes the detector that pauses nobody. Disable only. */
     public synchronized void retire() {
+        mode = AfkMode.OFF;
+        deadPlayers.clear();
         current = NoOpAfkDetector.INSTANCE;
     }
 
     private void publish(boolean essentialsGone) {
         PluginConfig settings = config.get();
-        AfkMode mode = settings.afkMode();
+        mode = settings.afkMode();
         int idleSeconds = settings.afkIdleSeconds();
         String timer = "built-in idle timer, " + idleSeconds + "s";
 
@@ -157,14 +178,14 @@ public final class AfkService implements AfkGate {
         } catch (Throwable thrown) {
             current = NoOpAfkDetector.INSTANCE;
             logger.log(Level.WARNING, "AFK detection: tracking.afk.mode is ESSENTIALS and "
-                    + "EssentialsX is installed but could not be bound; nobody will be treated "
-                    + "as AFK.", thrown);
+                    + "EssentialsX is installed but could not be bound; only death screens "
+                    + "will pause the clock.", thrown);
             return;
         }
         if (hook == null) {
             current = NoOpAfkDetector.INSTANCE;
             logger.warning("AFK detection: tracking.afk.mode is ESSENTIALS but EssentialsX is "
-                    + "not installed or not enabled; nobody will be treated as AFK.");
+                    + "not installed or not enabled; only death screens will pause the clock.");
             return;
         }
         current = new EssentialsAfkDetector(hook, null, scheduler, logger);
@@ -173,8 +194,8 @@ public final class AfkService implements AfkGate {
                     + "s; only players with " + EssentialsAfkDetector.AUTO_AFK_PERMISSION
                     + " are marked automatically, others only by /afk).");
         } else {
-            logger.warning("AFK detection: EssentialsX, but its auto-afk is disabled; only /afk "
-                    + "will pause the clock.");
+            logger.warning("AFK detection: EssentialsX, but its auto-afk is disabled; /afk "
+                    + "and death screens pause the clock.");
         }
     }
 
