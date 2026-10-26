@@ -11,22 +11,81 @@ import com.ninja6.sessionpulse.session.PlayerSession;
 import com.ninja6.sessionpulse.session.SessionSnapshot;
 import com.ninja6.sessionpulse.session.SessionStore;
 import com.ninja6.sessionpulse.session.SessionTracker;
+import java.lang.reflect.Proxy;
 import java.util.List;
 import java.util.UUID;
 import org.bukkit.Location;
 import org.bukkit.entity.Player;
+import org.bukkit.event.Cancellable;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerRespawnEvent;
+import org.bukkit.plugin.Plugin;
+import org.bukkit.plugin.RegisteredListener;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
 /** Death and respawn events reach the same AFK gate and accumulator as the session tick. */
 class DeathScreenAccrualTest {
+
+    @Test
+    void cancelledPaperDeathDoesNotPauseWithoutRespawn() throws Exception {
+        RecordingScheduler scheduler = new RecordingScheduler();
+        AfkFixture.Clock clock = new AfkFixture.Clock();
+        PluginConfig config = AfkFixture.config("BUILT_IN", 300);
+        BuiltInAfkDetector idle = new BuiltInAfkDetector(clock, () -> config);
+        AfkService service = new AfkService(() -> null, idle, scheduler,
+                new AfkFixture.Log().logger, () -> config);
+        service.resolve();
+        PlayerActivityListener listener = new PlayerActivityListener(service);
+        UUID uuid = UUID.randomUUID();
+        Player player = AfkFixture.player(uuid, "Ada", false, scheduler, new int[1]);
+        listener.onPlayerJoin(new PlayerJoinEvent(player, "joined"));
+        EventHandler handler = PlayerActivityListener.class
+                .getMethod("onPlayerDeath", PlayerDeathEvent.class).getAnnotation(EventHandler.class);
+        Plugin plugin = (Plugin) Proxy.newProxyInstance(Plugin.class.getClassLoader(),
+                new Class<?>[] {Plugin.class}, (proxy, method, args) -> {
+                    throw new UnsupportedOperationException(method.getName());
+                });
+        RegisteredListener registered = new RegisteredListener(listener,
+                (target, event) -> ((PlayerActivityListener) target)
+                        .onPlayerDeath((PlayerDeathEvent) event),
+                handler.priority(), plugin, handler.ignoreCancelled());
+        CancellableDeath death = new CancellableDeath(player);
+        death.setCancelled(true);
+
+        registered.callEvent(death);
+        idle.markActive(uuid);
+        assertFalse(service.isAfk(player), "a revived player receives no respawn to clear death");
+
+        // The same dispatch must still record a death that was allowed to complete.
+        death.setCancelled(false);
+        registered.callEvent(death);
+        assertTrue(service.isAfk(player));
+    }
+
+    /** Models Paper's cancellable death contract against the Spigot compile API. */
+    private static final class CancellableDeath extends PlayerDeathEvent implements Cancellable {
+        private boolean cancelled;
+
+        CancellableDeath(Player player) {
+            super(player, List.of(), 0, "died");
+        }
+
+        @Override
+        public boolean isCancelled() {
+            return cancelled;
+        }
+
+        @Override
+        public void setCancelled(boolean cancelled) {
+            this.cancelled = cancelled;
+        }
+    }
 
     @ParameterizedTest(name = "{0}, Essentials={1}, auto permission={2}")
     @CsvSource({

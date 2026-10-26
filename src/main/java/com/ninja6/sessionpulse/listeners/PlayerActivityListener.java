@@ -46,7 +46,7 @@ import org.bukkit.event.vehicle.VehicleMoveEvent;
  * crossing blocks and is never idle to this timer, and neither is one in a boat the current
  * carries.
  *
- * <p>Cancelled events still count, which is why no handler sets {@code ignoreCancelled}. A
+ * <p>Cancelled activity events still count, so their handlers omit {@code ignoreCancelled}. A
  * movement another plugin refused, such as EssentialsX freezing an AFK player, is still the
  * player pressing a key. {@link EventPriority#MONITOR} throughout, because nothing here
  * changes an event.
@@ -162,8 +162,8 @@ public final class PlayerActivityListener implements Listener {
         idle.seed(event.getPlayer().getUniqueId());
     }
 
-    /** Records the death screen immediately, independently of the idle threshold. */
-    @EventHandler(priority = EventPriority.MONITOR)
+    /** Records completed deaths; Paper can cancel death and revive without a respawn event. */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onPlayerDeath(PlayerDeathEvent event) {
         afk.markDead(event.getEntity().getUniqueId());
     }
