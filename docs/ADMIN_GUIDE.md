@@ -186,7 +186,11 @@ SessionPulse AFK integration checks cover the hook behaviour described below; th
 do not establish compatibility for other EssentialsX features. Check EssentialsX's
 own guidance before upgrading a server that depends on it.
 
-| `tracking.afk.mode` | EssentialsX state | Who is treated as AFK |
+Every mode except `"OFF"` also pauses immediately while a player is on the death
+screen, independently of the idle detector below. Respawning resumes the clock and
+restarts the built-in idle timer; quitting clears the death record.
+
+| `tracking.afk.mode` | EssentialsX state | Who is detected as idle |
 | --- | --- | --- |
 | `"OFF"` | any | Nobody. The clock never pauses. |
 | `BUILT_IN` | any | Everyone, by the idle timer. |
@@ -408,9 +412,9 @@ The `Configuration loaded: N milestone(s)` line tells you how many survived.
 
 **Nobody ever goes AFK.**
 Check `tracking.afk.mode` against the table in [section 5](#5-afk-detection). `"OFF"`
-marks nobody by design, and `ESSENTIALS` marks nobody when EssentialsX is absent or could
-not be bound — both cases are in the log. Remember that a bare `OFF` without quotes is
-read by YAML as `false` and falls back to `AUTO`.
+marks nobody by design, and `ESSENTIALS` only pauses death screens when EssentialsX is
+absent or could not be bound — both cases are in the log. Remember that a bare `OFF`
+without quotes is read by YAML as `false` and falls back to `AUTO`.
 
 **`/afk` does not pause the clock.**
 A manual `/afk` only counts where EssentialsX is bound. Without it, only the idle timer

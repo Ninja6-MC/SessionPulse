@@ -11,6 +11,7 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
+import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.player.AsyncPlayerChatEvent;
 import org.bukkit.event.player.PlayerCommandPreprocessEvent;
@@ -18,12 +19,14 @@ import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.event.server.PluginDisableEvent;
 import org.bukkit.event.server.PluginEnableEvent;
 import org.bukkit.event.vehicle.VehicleMoveEvent;
 
 /**
- * Feeds the idle timer, and re-resolves AFK detection when EssentialsX comes or goes.
+ * Feeds the idle timer and death state, and re-resolves AFK detection when EssentialsX
+ * comes or goes.
  *
  * <p>Registered whatever the configured mode, so the timer is already warm when a reload or
  * a departing EssentialsX switches to it.
@@ -51,8 +54,9 @@ import org.bukkit.event.vehicle.VehicleMoveEvent;
  * <h2>Threads</h2>
  *
  * <p>Chat arrives on the async chat thread and everything else on the player's region. Every
- * handler only writes a monotonic reading into the timer's concurrent map, so none of them
- * touches anything a region owns.
+ * activity handler only writes a monotonic reading into the timer's concurrent map.
+ * Death and respawn record UUIDs in the service's concurrent set; the global tick never
+ * reads a player's live death state.
  */
 public final class PlayerActivityListener implements Listener {
 
@@ -158,6 +162,18 @@ public final class PlayerActivityListener implements Listener {
         idle.seed(event.getPlayer().getUniqueId());
     }
 
+    /** Records the death screen immediately, independently of the idle threshold. */
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onPlayerDeath(PlayerDeathEvent event) {
+        afk.markDead(event.getEntity().getUniqueId());
+    }
+
+    /** Clears the death screen and gives the respawned player a fresh idle interval. */
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onPlayerRespawn(PlayerRespawnEvent event) {
+        afk.respawn(event.getPlayer().getUniqueId());
+    }
+
     /**
      * Drops the player from the idle timer and from the detector in force.
      *
@@ -182,7 +198,7 @@ public final class PlayerActivityListener implements Listener {
 
     /**
      * Re-resolves as though EssentialsX were gone when it is being disabled. AUTO falls to the
-     * idle timer; ESSENTIALS says in the log that nobody will be treated as AFK.
+     * idle timer; ESSENTIALS says in the log that only death screens pause the clock.
      *
      * @param event any plugin disabling
      */
