@@ -108,7 +108,34 @@ Notes on the table:
 
 ### Step 2: Cut the Tag
 
-Tag the release on `main`:
+Cut the tag with `scripts/release.sh` (or `scripts\release.ps1` on Windows, which runs the
+same script under Git Bash) from the main checkout, never from a linked worktree. Pass the
+version without the leading `v`, and run it with `--dry-run` first:
+
+```bash
+scripts/release.sh 0.2.0-beta.2 --dry-run
+scripts/release.sh 0.2.0-beta.2
+```
+
+Before it tags anything, the script refuses to continue unless:
+
+* the version matches the tag grammar `release.yml` accepts, and is neither unsuffixed nor
+  `-rc.N` below 1.0.0 (section 1);
+* it runs in the main checkout, on `main`, with no uncommitted changes, and `main` equals
+  `origin/main` after a fetch;
+* the tag exists neither locally nor on `origin`;
+* the latest *Continuous Integration* push run on `main` for that commit succeeded (with
+  no usable `gh` it only warns, and that check is yours to make);
+* `CHANGELOG.md` has the section the extractor will use. A stable version needs
+  `## [X.Y.Z]`; a pre-release without any section only warns.
+
+It then prints the tag, commit, channel and release notes. `--dry-run` stops there.
+Without it, the script asks for the tag to be typed back, creates an annotated tag and
+pushes that one tag by name. The extractor and tag grammar are copies of the ones in
+`release.yml`; `scripts/tests/test_release_script.py` fails if they drift apart.
+
+If the script cannot be used, tag the release on `main` by hand after making the same
+checks:
 
 ```bash
 git tag -a v0.1.0-alpha.1 -m "v0.1.0-alpha.1"
