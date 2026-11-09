@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0-beta.2]
+
 ### Fixed
 - Death screens pause counted time immediately in every AFK mode except `OFF`,
   including both EssentialsX paths. Respawning restarts the built-in idle timer.
