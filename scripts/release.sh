@@ -223,9 +223,8 @@ main() {
 
   # 6. The tag must not already exist, locally or on origin. Re-tagging silently is
   #    how a published version ends up pointing at different code than its tag.
-  if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
-    fail "tag '$tag' already exists locally. Delete it first if it was never pushed: git tag -d $tag"
-  fi
+  #    Origin is checked first: step 5 fetched its tags, so a released tag is also
+  #    local, and the local hint below must only ever name a tag that was never pushed.
   local rc=0
   git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1 || rc=$?
   case "$rc" in
@@ -233,6 +232,9 @@ main() {
     2) ;;
     *) fail "could not query origin for '$tag' (git ls-remote exit $rc)." ;;
   esac
+  if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+    fail "tag '$tag' already exists locally but not on origin. Delete it first: git tag -d $tag"
+  fi
   ok "tag '$tag' is unused locally and on origin"
 
   # 7. CI green on this exact commit.

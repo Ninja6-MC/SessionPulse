@@ -58,6 +58,13 @@ class ReleaseScriptSourceTest(unittest.TestCase):
         self.assertIn('git push origin "refs/tags/$tag"', text)
         self.assertNotRegex(text, r"git push[^\n]*--tags")
 
+    def test_checks_origin_before_local_tag(self):
+        # Step 5 fetches origin's tags, so a released tag is also local. Checking the
+        # local tag first would suggest `git tag -d` on a published tag.
+        text = SCRIPT.read_text()
+        self.assertLess(text.index('git ls-remote --exit-code --tags origin "refs/tags/$tag"'),
+                        text.index('git rev-parse -q --verify "refs/tags/$tag"'))
+
 
 @unittest.skipIf(BASH is None, "bash is not available")
 class ReleaseScriptRulesTest(unittest.TestCase):
