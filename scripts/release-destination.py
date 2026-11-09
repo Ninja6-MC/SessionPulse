@@ -166,25 +166,15 @@ def verify_modrinth_download(manifest, project, directory, retries=0):
             time.sleep(20)
 
 
-def require_public_modrinth_project(project, manifest=None, allow_unlisted=False):
+def require_public_modrinth_project(project):
     url = f"https://api.modrinth.com/v2/project/{urllib.parse.quote(project, safe='')}"
     status, public_project = request(url)
     if status != 200 or not isinstance(public_project, dict) or not public_project.get("id"):
         raise ValueError("Modrinth project is not anonymously accessible; resolve project review before publication")
     # The project status enum is documented at https://docs.modrinth.com/api/operations/getproject/.
     # Anonymous accessibility alone can include withheld or unlisted projects.
-    if public_project.get("status") == "approved":
-        return
-    # Temporary, explicit exception for the next tested beta; all other tags stay strict.
-    if (allow_unlisted and manifest and manifest.get("tag") == "v0.2.0-beta.1"
-            and manifest.get("version") == "0.2.0-beta.1" and manifest.get("channel") == "beta"
-            and project in ("sessionpulse", "3fjmIZYU")
-            and public_project.get("id") == "3fjmIZYU"
-            and public_project.get("slug") == "sessionpulse"
-            and public_project.get("status") in ("unlisted", "withheld")):
-        print("Modrinth: temporary unlisted-project exception for v0.2.0-beta.1")
-        return
-    raise ValueError("Modrinth project is not approved; resolve project review before publication")
+    if public_project.get("status") != "approved":
+        raise ValueError("Modrinth project is not approved; resolve project review before publication")
 
 
 def check_hangar_metadata(version, manifest, directory, audience):
@@ -298,14 +288,10 @@ def main():
     parser.add_argument("--require-complete", action="store_true")
     parser.add_argument("--require-absent", action="store_true")
     parser.add_argument("--require-public-project", action="store_true")
-    parser.add_argument("--allow-sessionpulse-unlisted-beta", action="store_true")
     parser.add_argument("--modrinth-visibility-retries", type=int, choices=range(0, 7), default=0)
     parser.add_argument("--require-hangar-target", action="store_true")
     parser.add_argument("--require-hangar-upload-access", action="store_true")
     args = parser.parse_args()
-    if args.allow_sessionpulse_unlisted_beta and (args.destination != "modrinth"
-            or not args.require_public_project):
-        raise ValueError("Temporary Modrinth exception requires Modrinth project preflight")
     if args.modrinth_visibility_retries and (args.destination != "modrinth" or not args.require_complete):
         raise ValueError("Modrinth visibility retries require final consumer verification")
     candidate.check_evidence(args)
@@ -321,7 +307,7 @@ def main():
         state = (verify_modrinth_download(manifest, args.project, directory, args.modrinth_visibility_retries)
                  if args.modrinth_visibility_retries else modrinth(manifest, args.project, directory))
         if args.require_public_project:
-            require_public_modrinth_project(args.project, manifest, args.allow_sessionpulse_unlisted_beta)
+            require_public_modrinth_project(args.project)
     else:
         state = hangar(manifest, args.project, directory)
         if args.require_hangar_target:
