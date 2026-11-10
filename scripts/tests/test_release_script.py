@@ -9,7 +9,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "release.sh"
-WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
+WORKFLOW = ROOT / ".github" / "workflows" / "release-candidate.yml"
+PUBLISHER = ROOT / ".github" / "workflows" / "release.yml"
 # shutil.which searches PATH only. A bare "bash" handed to subprocess on Windows is found
 # in System32 first, which is WSL and cannot see this checkout's paths.
 BASH = shutil.which("bash")
@@ -51,7 +52,19 @@ class ReleaseScriptSourceTest(unittest.TestCase):
         pattern = r'"\$TAG" =~ (\^v\S+\$) \]\]'
         workflow = re.search(pattern, WORKFLOW.read_text()).group(1)
         script = re.search(pattern.replace("TAG", "tag"), SCRIPT.read_text()).group(1)
+        publisher = re.search(pattern, PUBLISHER.read_text()).group(1)
         self.assertEqual(script, workflow)
+        self.assertEqual(publisher, workflow)
+
+    def test_dispatches_publisher_on_the_tag_with_every_input(self):
+        text = SCRIPT.read_text()
+        self.assertIn('gh workflow run release.yml -R "$REPO" --ref "$tag"', text)
+        for name in ("tag", "candidate_run_id", "destinations", "modrinth_absence_confirmed",
+                     "hangar_absence_confirmed", "nonce"):
+            self.assertIn(f"-f {name}=", text)
+        self.assertIn('endswith(\\" $nonce\\")', text)
+        # The tag push comes before the candidate wait, and the wait before the dispatch.
+        self.assertLess(text.index('git push origin "refs/tags/$tag"'), text.index('wait_for_candidate "$tag"'))
 
     def test_pushes_one_tag_by_name(self):
         text = SCRIPT.read_text()
@@ -73,12 +86,38 @@ class ReleaseScriptRulesTest(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         Path(self.tmp.name, "CHANGELOG.md").write_text(CHANGELOG, newline="\n")
 
-    def run_function(self, call):
+    def run_function(self, call, stdin=""):
         script = SCRIPT.as_posix()
         return subprocess.run(
             [BASH, "-c", f'source "{script}" && {call}'],
-            cwd=self.tmp.name, capture_output=True, text=True,
+            cwd=self.tmp.name, capture_output=True, text=True, input=stdin,
         )
+
+    def test_destination_list_accepts_subsets_and_rejects_typos(self):
+        for value in ("github,modrinth,hangar", "hangar", "modrinth,github"):
+            self.assertEqual(self.run_function(f'check_destinations "{value}"').returncode, 0, value)
+        for value in ("", "all", "github,", "Hangar", "github hangar", "hangar,hangar"):
+            self.assertNotEqual(self.run_function(f'check_destinations "{value}"').returncode, 0, value)
+
+    def test_absence_attestation_has_no_default(self):
+        self.assertEqual(self.run_function("ask_absence Modrinth 1.0.0", "absent\n").stdout, "true\n")
+        self.assertEqual(self.run_function("ask_absence Hangar 1.0.0", "present\n").stdout, "false\n")
+        retried = self.run_function("ask_absence Hangar 1.0.0", "\ny\nyes\nabsent\n")
+        self.assertEqual(retried.stdout, "true\n")
+        self.assertEqual(retried.stderr.count("Type absent or present."), 3)
+        for stdin in ("", "\n", "yes\n"):
+            result = self.run_function("ask_absence Modrinth 1.0.0", stdin)
+            self.assertNotEqual(result.returncode, 0, repr(stdin))
+            self.assertIn("Nothing was dispatched", result.stderr)
+
+    def test_resume_needs_both_options_and_a_run_id(self):
+        for args in ("1.0.0 --resume hangar", "1.0.0 --candidate-run 5", "1.0.0 --resume"):
+            self.assertEqual(self.run_function(f"main {args}").returncode, 2, args)
+        result = self.run_function("main 1.0.0 --resume hangar --candidate-run abc")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--candidate-run takes", result.stderr)
+        result = self.run_function("main 1.0.0 --resume hangar,spigot --candidate-run 5")
+        self.assertIn("is not a destination list", result.stderr)
 
     def check_version(self, version):
         return self.run_function(f'check_version "{version}"').returncode

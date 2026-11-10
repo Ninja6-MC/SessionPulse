@@ -57,24 +57,22 @@ def tag_sha(tag):
     return peeled[0] if peeled else direct[0]
 
 
-def reconciled_absence(manifest, destination, project):
-    """Only a candidate-bound maintainer inventory audit can resolve uncertain absence."""
-    raw = os.environ.get("RELEASE_ABSENCE_RECONCILIATION", "")
-    if not raw.strip():
-        raise ValueError("Missing release environment RELEASE_ABSENCE_RECONCILIATION; audit the registry owner inventory and set the candidate record before approval")
-    try:
-        record = json.loads(raw)
-    except ValueError:
-        raise ValueError("RELEASE_ABSENCE_RECONCILIATION is malformed JSON") from None
-    if not isinstance(record, dict):
-        raise ValueError("RELEASE_ABSENCE_RECONCILIATION must be a JSON object")
-    for key in ("candidate_id", "tag", "version", "source_sha"):
-        if record.get(key) != manifest.get(key):
-            raise ValueError(f"Release absence reconciliation has mismatched {key}")
-    confirmed = record.get("confirmed_absent")
-    if not isinstance(confirmed, dict) or confirmed.get(destination) != project:
-        raise ValueError(f"Release absence reconciliation does not confirm {destination} project {project}")
+def attested_absence(destination, confirmed):
+    """An omitted registry result is not proof of absence; only this dispatch's attestation is."""
+    if not confirmed:
+        raise ValueError(f"{destination} lookup does not show this version, which does not prove it is absent; "
+                         f"inspect the owner inventory and dispatch with {destination}_absence_confirmed=true only if it is absent there. "
+                         "A draft, unlisted, scheduled or deleted version for this number must be reconciled by hand instead")
     return "absent"
+
+
+def modrinth_headers(anonymous):
+    if anonymous:
+        return {}
+    token = os.environ.get("MODRINTH_TOKEN")
+    if not token:
+        raise ValueError("Modrinth lookup requires the release environment token")
+    return {"Authorization": token}
 
 
 def github(directory, manifest, repo):
@@ -82,6 +80,11 @@ def github(directory, manifest, repo):
     process = subprocess.run(["gh", "api", f"repos/{repo}/releases/tags/{tag}"], capture_output=True, text=True)
     if process.returncode:
         if "HTTP 404" in process.stderr:
+            drafts = subprocess.run(["gh", "api", f"repos/{repo}/releases?per_page=100"], capture_output=True, text=True)
+            if drafts.returncode:
+                raise ValueError(f"GitHub release list query failed: {drafts.stderr.strip()}")
+            if any(item.get("tag_name") == tag for item in json.loads(drafts.stdout)):
+                raise ValueError(f"A draft GitHub release already exists for {tag}; reconcile it by hand")
             return "absent"
         raise ValueError(f"GitHub release query failed: {process.stderr.strip()}")
     release = json.loads(process.stdout)
@@ -115,17 +118,14 @@ class ModrinthVisibilityPending(ValueError):
     """A listed version has not propagated to anonymous consumers yet."""
 
 
-def modrinth(manifest, project, directory):
-    token = os.environ.get("MODRINTH_TOKEN")
-    if not token:
-        raise ValueError("Modrinth lookup requires the release environment token")
+def modrinth(manifest, project, directory, confirmed=False, anonymous=False):
     url = f"https://api.modrinth.com/v2/project/{urllib.parse.quote(project, safe='')}/version"
-    status, versions = request(url, {"Authorization": token})
+    status, versions = request(url, modrinth_headers(anonymous))
     if status != 200 or not isinstance(versions, list):
         raise ValueError("Cannot inspect Modrinth versions")
     found = [item for item in versions if item.get("version_number") == manifest["version"]]
     if not found:
-        return reconciled_absence(manifest, "modrinth", project)
+        return attested_absence("modrinth", confirmed)
     if len(found) != 1:
         raise ValueError("Multiple Modrinth versions match candidate")
     version = found[0]
@@ -156,7 +156,8 @@ def modrinth(manifest, project, directory):
 def verify_modrinth_download(manifest, project, directory, retries=0):
     for attempt in range(retries + 1):
         try:
-            state = modrinth(manifest, project, directory)
+            # Runs only after this job's own upload, so a missing version is pending visibility.
+            state = modrinth(manifest, project, directory, confirmed=True)
             if state == "complete":
                 return state
             raise ModrinthVisibilityPending("Modrinth uploaded version is not visible in the version list yet")
@@ -215,12 +216,12 @@ def check_hangar_metadata(version, manifest, directory, audience):
     return file_url
 
 
-def hangar(manifest, project, directory):
-    headers = hangar_session()
+def hangar(manifest, project, directory, confirmed=False, anonymous=False):
+    headers = {} if anonymous else hangar_session()
     url = f"https://hangar.papermc.io/api/v1/projects/{urllib.parse.quote(project, safe='')}/versions/{urllib.parse.quote(manifest['version'], safe='')}"
     status, version = request(url, headers)
     if status == 404:
-        return reconciled_absence(manifest, "hangar", project)
+        return attested_absence("hangar", confirmed)
     if status == 200:
         check_hangar_metadata(version, manifest, directory, "Authenticated")
         public_status, public_version = request(url)
@@ -275,9 +276,28 @@ def require_hangar_upload_access(project_id):
         raise ValueError(f"Hangar release token owner lacks create_version or edit_page on project {project_id}")
 
 
+def github_ready(repo):
+    process = subprocess.run(["gh", "api", f"repos/{repo}/releases?per_page=1"], capture_output=True, text=True)
+    if process.returncode:
+        raise ValueError(f"GitHub releases are not readable with the workflow token: {process.stderr.strip()}")
+
+
+def modrinth_ready(project):
+    """Token accepted, project readable and approved. Create-version scope is proven only by the upload."""
+    url = f"https://api.modrinth.com/v2/project/{urllib.parse.quote(project, safe='')}/version"
+    status, versions = request(url, modrinth_headers(False))
+    if status != 200 or not isinstance(versions, list):
+        raise ValueError("Modrinth token cannot read the project versions")
+    require_public_modrinth_project(project)
+
+
+def hangar_ready(manifest, project, owner):
+    require_hangar_upload_access(require_hangar_target(manifest, project, owner))
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("destination", choices=("github", "modrinth", "hangar", "inventory"))
+    parser.add_argument("destination", choices=("github", "modrinth", "hangar"))
     parser.add_argument("--directory", required=True)
     parser.add_argument("--evidence", required=True)
     parser.add_argument("--tag", required=True)
@@ -291,27 +311,47 @@ def main():
     parser.add_argument("--modrinth-visibility-retries", type=int, choices=range(0, 7), default=0)
     parser.add_argument("--require-hangar-target", action="store_true")
     parser.add_argument("--require-hangar-upload-access", action="store_true")
+    # Passed only from this dispatch's input, after the owner inventory was inspected.
+    parser.add_argument("--absence-confirmed", action="store_true")
+    # Anonymous lookups, for the unapproved plan job that holds no publishing secret.
+    parser.add_argument("--public-only", action="store_true")
+    # Non-writing credential and readiness checks; the version state is not read.
+    parser.add_argument("--credentials-only", action="store_true")
     args = parser.parse_args()
     if args.modrinth_visibility_retries and (args.destination != "modrinth" or not args.require_complete):
         raise ValueError("Modrinth visibility retries require final consumer verification")
+    if args.public_only and (args.require_hangar_upload_access or args.credentials_only):
+        raise ValueError("Credential checks cannot run in public-only mode")
+    if args.credentials_only and (args.require_complete or args.require_absent or args.absence_confirmed):
+        raise ValueError("Credential checks do not read destination state")
     candidate.check_evidence(args)
     manifest = candidate.verify(args)
     if tag_sha(args.tag) != manifest["source_sha"]:
         raise ValueError("Origin tag no longer points to candidate source commit")
     directory = Path(args.directory)
-    if args.destination == "inventory":
-        state = reconciled_absence(manifest, "hangar", args.project)
-    elif args.destination == "github":
-        state = github(directory, manifest, os.environ["GITHUB_REPOSITORY"])
+    repo = os.environ.get("GITHUB_REPOSITORY", "")
+    owner = repo.split("/")[0]
+    if args.credentials_only:
+        if args.destination == "github":
+            github_ready(repo)
+        elif args.destination == "modrinth":
+            modrinth_ready(args.project)
+        else:
+            hangar_ready(manifest, args.project, owner)
+        print(f"{args.destination}: ready")
+        return
+    if args.destination == "github":
+        state = github(directory, manifest, repo)
     elif args.destination == "modrinth":
         state = (verify_modrinth_download(manifest, args.project, directory, args.modrinth_visibility_retries)
-                 if args.modrinth_visibility_retries else modrinth(manifest, args.project, directory))
+                 if args.modrinth_visibility_retries
+                 else modrinth(manifest, args.project, directory, args.absence_confirmed, args.public_only))
         if args.require_public_project:
             require_public_modrinth_project(args.project)
     else:
-        state = hangar(manifest, args.project, directory)
+        state = hangar(manifest, args.project, directory, args.absence_confirmed, args.public_only)
         if args.require_hangar_target:
-            project_id = require_hangar_target(manifest, args.project, os.environ["GITHUB_REPOSITORY"].split("/")[0])
+            project_id = require_hangar_target(manifest, args.project, owner)
             if args.require_hangar_upload_access:
                 require_hangar_upload_access(project_id)
     if args.require_complete and state != "complete":

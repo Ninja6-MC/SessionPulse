@@ -1,46 +1,91 @@
 name: Publish Release
+run-name: Publish ${{ inputs.tag }} ${{ inputs.nonce }}
 
+# Promotes a candidate built by release-candidate.yml. Start it on the release tag
+# (scripts/release.sh does), never on a branch: every job requires github.ref to be
+# that tag. RELEASE_PROCESS.md, step 3, describes the inputs and the retry rules.
 on:
-  push:
-    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag, the same ref the workflow runs on (vX.Y.Z[-alpha.N|-beta.N|-rc.N])
+        required: true
+        type: string
+      candidate_run_id:
+        description: Run ID of the successful Release Candidate run for this tag
+        required: true
+        type: string
+      destinations:
+        description: Destinations to publish in this run, comma-separated
+        required: true
+        default: github,modrinth,hangar
+        type: string
+      modrinth_absence_confirmed:
+        description: I inspected the Modrinth owner inventory for this exact version and it is absent in every state
+        required: false
+        default: false
+        type: boolean
+      hangar_absence_confirmed:
+        description: I inspected the Hangar owner inventory for this exact version and it is absent in every state
+        required: false
+        default: false
+        type: boolean
+      nonce:
+        description: Free text added to the run name so a script can find this run
+        required: false
+        default: ''
+        type: string
 
+# Evaluated when the run is queued, before any step can validate the inputs, so the
+# group is keyed on the ref the run is on rather than on the tag input.
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-publish-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
   contents: read
 
+env:
+  TAG: ${{ inputs.tag }}
+  CANDIDATE_RUN: ${{ inputs.candidate_run_id }}
+
 jobs:
-  candidate:
-    name: Build Release Candidate
+  plan:
+    name: Plan Publication
+    if: github.ref == format('refs/tags/{0}', inputs.tag)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # No environment and no publishing secret: everything here fails before approval.
+    permissions:
+      contents: read
+      actions: read
     outputs:
-      attempt: ${{ steps.vars.outputs.attempt }}
-      sha: ${{ steps.vars.outputs.sha }}
+      sha: ${{ steps.candidate.outputs.sha }}
+      attempt: ${{ steps.candidate.outputs.attempt }}
       version: ${{ steps.vars.outputs.version }}
       channel: ${{ steps.vars.outputs.channel }}
       hangar_channel: ${{ steps.vars.outputs.hangar_channel }}
       prerelease: ${{ steps.vars.outputs.prerelease }}
+      github: ${{ steps.vars.outputs.github }}
+      modrinth: ${{ steps.vars.outputs.modrinth }}
+      hangar: ${{ steps.vars.outputs.hangar }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          fetch-depth: 0
-      - name: Validate tag and source
+      - name: Validate tag and destinations
         id: vars
+        env:
+          DESTINATIONS: ${{ inputs.destinations }}
+          MODRINTH_CONFIRMED: ${{ inputs.modrinth_absence_confirmed }}
+          HANGAR_CONFIRMED: ${{ inputs.hangar_absence_confirmed }}
         run: |
           set -euo pipefail
-          TAG="$GITHUB_REF_NAME"
           if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?$ ]]; then
             echo "::error::Invalid release tag $TAG"
             exit 1
           fi
-          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
-          SHA="$(git rev-parse HEAD)"
-          test "$SHA" = "$(git rev-parse "$TAG^{commit}")"
-          git merge-base --is-ancestor "$SHA" origin/main
+          test "$GITHUB_REF" = "refs/tags/$TAG"
           VERSION="${TAG#v}"
           case "$VERSION" in
             *-alpha.*) CHANNEL=alpha; HANGAR=Alpha; PRE=true ;;
@@ -48,316 +93,249 @@ jobs:
             *) CHANNEL=release; HANGAR=Release; PRE=false ;;
           esac
           {
-            echo "sha=$SHA"
-            echo "attempt=$GITHUB_RUN_ATTEMPT"
             echo "version=$VERSION"
             echo "channel=$CHANNEL"
             echo "hangar_channel=$HANGAR"
             echo "prerelease=$PRE"
           } >> "$GITHUB_OUTPUT"
-      - name: Validate Gradle wrapper
-        uses: gradle/actions/wrapper-validation@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
-      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
-        with:
-          java-version: '21'
-          distribution: temurin
-      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
-      - name: Collect release notes
+          python3 scripts/release-publisher.py destinations --value "$DESTINATIONS"
+          for pair in "modrinth:$MODRINTH_CONFIRMED" "hangar:$HANGAR_CONFIRMED"; do
+            name="${pair%%:*}"
+            if [ "${pair#*:}" = true ] && ! grep -qx "$name=true" "$GITHUB_OUTPUT"; then
+              echo "::error::${name}_absence_confirmed is set but $name is not a selected destination"
+              exit 1
+            fi
+          done
+      - name: Verify candidate run provenance
+        id: candidate
         env:
-          VERSION: ${{ steps.vars.outputs.version }}
-          PRERELEASE: ${{ steps.vars.outputs.prerelease }}
-        run: |
-          set -euo pipefail
-          extract() {
-            awk -v header="## [$1]" '
-              index($0, header) == 1 { found = 1; next }
-              found && /^## / { exit }
-              found && /^\[[^]]+\]: / { exit }
-              found { print }
-            ' CHANGELOG.md
-          }
-          blank() { [ -z "${1//[[:space:]]/}" ]; }
-          NOTES="$(extract "$VERSION")"
-          if [ "$PRERELEASE" = true ]; then
-            blank "$NOTES" && NOTES="$(extract "${VERSION%%-*}")"
-            blank "$NOTES" && NOTES="$(extract Unreleased)"
-            blank "$NOTES" && NOTES="No changelog section was written for this pre-release."
-          elif blank "$NOTES"; then
-            echo "::error::CHANGELOG.md has no section for $VERSION"
-            exit 1
-          fi
-          mkdir -p candidate
-          printf '%s\n' "$NOTES" > candidate/release-notes.md
-          printf '%s\n\nRequires Java 21 for supported 1.x servers; Minecraft 26.3 servers require Java 25.\n' "$NOTES" > candidate/release-body.md
-      - name: Test source and build candidate once
-        env:
-          VERSION: ${{ steps.vars.outputs.version }}
-        run: |
-          chmod +x ./gradlew
-          ./gradlew test shadowJar -PpluginVersion="$VERSION" --no-daemon
-          shopt -s nullglob
-          jars=(build/libs/*.jar)
-          test -f "build/libs/SessionPulse-$VERSION.jar"
-          cp "build/libs/SessionPulse-$VERSION.jar" candidate/
-          (cd candidate && sha256sum "SessionPulse-$VERSION.jar" > "SessionPulse-$VERSION.jar.sha256")
-      - name: Seal candidate manifest
-        env:
-          SHA: ${{ steps.vars.outputs.sha }}
-        run: |
-          python3 scripts/release-candidate.py create --directory candidate --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
-      - name: Retain candidate
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: release-candidate-${{ github.run_id }}-${{ github.run_attempt }}
-          path: candidate/
-          if-no-files-found: error
-          retention-days: 30
-
-  smoke:
-    name: Candidate Smoke (${{ matrix.label }})
-    needs: candidate
-    env:
-      CANDIDATE_ATTEMPT: ${{ needs.candidate.outputs.attempt }}
-    runs-on: ubuntu-latest
-    timeout-minutes: ${{ matrix.platform == 'spigot' && 60 || 35 }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - {label: paper, platform: paper, minecraft: '1.21.11', java: '21', fixture: botClientJar, bot: SessionPulseProbeBot}
-          - {label: folia, platform: folia, minecraft: '1.21.11', java: '21', fixture: botClientJar, bot: SessionPulseProbeBot}
-          - {label: spigot, platform: spigot, minecraft: '1.21.11', java: '21', fixture: botClientJar, bot: SessionPulseProbeBot}
-          - {label: 'paper 26.3', platform: paper, minecraft: '26.3', java: '25', fixture: botClient26Jar, bot: SessionPulseProbeBot26, server_build: '147'}
-          - {label: 'spigot 26.3', platform: spigot, minecraft: '26.3', java: '25', fixture: botClient26Jar, bot: SessionPulseProbeBot26}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/release-publisher.py provenance --repo "$GITHUB_REPOSITORY" --tag "$TAG" --run-id "$CANDIDATE_RUN"
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: release-candidate-${{ github.run_id }}-${{ needs.candidate.outputs.attempt }}
+          name: release-candidate-${{ inputs.candidate_run_id }}-${{ steps.candidate.outputs.attempt }}
           path: candidate
-      - name: Verify downloaded candidate before tests
-        env:
-          SHA: ${{ needs.candidate.outputs.sha }}
-        run: python3 scripts/release-candidate.py verify --directory candidate --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT"
-      - name: Validate Gradle wrapper
-        uses: gradle/actions/wrapper-validation@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
-      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
-        with:
-          java-version: '21'
-          distribution: temurin
-      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
-      - name: Build protocol test fixture
-        run: |
-          chmod +x ./gradlew
-          ./gradlew ${{ matrix.fixture }} --no-daemon
-      - name: Set up server runtime
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
-        with:
-          java-version: ${{ matrix.java }}
-          distribution: temurin
-      - name: Build Spigot test server
-        id: spigot-input
-        if: matrix.platform == 'spigot'
-        env:
-          MC_VERSION: ${{ matrix.minecraft }}
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/buildtools" "$RUNNER_TEMP/spigot-jar" "$RUNNER_TEMP/spigot-input"
-          REVISION="$(python3 scripts/spigot-input.py --minecraft "$MC_VERSION" --field revision)"
-          BUILD="$(python3 scripts/spigot-input.py --minecraft "$MC_VERSION" --field buildtools_build)"
-          curl -fsSL --retry 3 --retry-delay 5 -m 60 -o "$RUNNER_TEMP/spigot-input/metadata.json" "https://hub.spigotmc.org/versions/$REVISION.json"
-          curl -fsSL --retry 3 --retry-delay 5 -o "$RUNNER_TEMP/buildtools/BuildTools.jar" "https://hub.spigotmc.org/jenkins/job/BuildTools/$BUILD/artifact/target/BuildTools.jar"
-          python3 scripts/spigot-input.py --minecraft "$MC_VERSION" --metadata "$RUNNER_TEMP/spigot-input/metadata.json" --buildtools "$RUNNER_TEMP/buildtools/BuildTools.jar" --output "$RUNNER_TEMP/spigot-input/input.json" --github-output "$GITHUB_OUTPUT"
-          cd "$RUNNER_TEMP/buildtools"
-          java -jar BuildTools.jar --rev "$REVISION" --compile SPIGOT --output-dir "$RUNNER_TEMP/spigot-jar" --final-name "spigot-$MC_VERSION.jar"
-      - name: Exercise downloaded JAR
-        env:
-          VERSION: ${{ needs.candidate.outputs.version }}
-          PLATFORM: ${{ matrix.platform }}
-          SPIGOT_JAR: ${{ runner.temp }}/spigot-jar/spigot-${{ matrix.minecraft }}.jar
-          BOT_JAR: build/test-fixtures/${{ matrix.bot }}.jar
-          SERVER_BUILD: ${{ matrix.server_build }}
-          BUILDTOOLS_BUILD: ${{ steps.spigot-input.outputs.buildtools_build }}
-          SPIGOT_INPUT: ${{ matrix.platform == 'spigot' && format('{0}/spigot-input/input.json', runner.temp) || '' }}
-        run: |
-          set -euo pipefail
-          chmod +x .github/scripts/smoke-test.sh
-          .github/scripts/smoke-test.sh "$PLATFORM" "${{ matrix.minecraft }}" "candidate/SessionPulse-$VERSION.jar"
-      - name: Record passing smoke evidence
-        env:
-          SHA: ${{ needs.candidate.outputs.sha }}
-          PLATFORM: ${{ matrix.platform }}
-        run: python3 scripts/release-candidate.py receipt --directory candidate --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT" --platform "$PLATFORM" --smoke-evidence "run-$PLATFORM/evidence.json" --output "smoke-$PLATFORM-${{ matrix.minecraft }}.json"
-      - name: Retain smoke receipt
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: smoke-${{ matrix.platform }}-${{ matrix.minecraft }}-${{ github.run_id }}-${{ needs.candidate.outputs.attempt }}
-          path: smoke-${{ matrix.platform }}-${{ matrix.minecraft }}.json
-          if-no-files-found: error
-          retention-days: 30
-      - name: Retain smoke logs
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: release-log-${{ matrix.platform }}-${{ matrix.minecraft }}-${{ github.run_id }}-${{ needs.candidate.outputs.attempt }}
-          path: |
-            run-${{ matrix.platform }}/server.log
-            run-${{ matrix.platform }}/bot-*.log
-            run-${{ matrix.platform }}/evidence.json
-            run-${{ matrix.platform }}/spigot-input.json
-          if-no-files-found: warn
-          retention-days: 30
-
-  evidence:
-    name: Verify Candidate Evidence
-    needs: [candidate, smoke]
-    env:
-      CANDIDATE_ATTEMPT: ${{ needs.candidate.outputs.attempt }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ github.token }}
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: release-candidate-${{ github.run_id }}-${{ needs.candidate.outputs.attempt }}
-          path: candidate
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          pattern: smoke-*-${{ github.run_id }}-${{ needs.candidate.outputs.attempt }}
-          path: receipts
-          merge-multiple: true
-      - name: Bind passing test evidence
+          name: release-evidence-${{ inputs.candidate_run_id }}-${{ steps.candidate.outputs.attempt }}
+          path: .
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+      - name: Verify candidate and test evidence
         env:
-          SHA: ${{ needs.candidate.outputs.sha }}
-        run: python3 scripts/release-candidate.py evidence --directory candidate --receipts receipts --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT" --output evidence.json
-      - name: Show candidate for approval and registry reconciliation
+          SHA: ${{ steps.candidate.outputs.sha }}
+          CANDIDATE_ATTEMPT: ${{ steps.candidate.outputs.attempt }}
+        run: python3 scripts/release-candidate.py check-evidence --directory candidate --evidence evidence.json --tag "$TAG" --sha "$SHA" --run-id "$CANDIDATE_RUN" --attempt "$CANDIDATE_ATTEMPT"
+      - name: Refuse attestations beside another publisher run
         env:
-          SHA: ${{ needs.candidate.outputs.sha }}
+          GH_TOKEN: ${{ github.token }}
+          ATTESTED: ${{ inputs.modrinth_absence_confirmed || inputs.hangar_absence_confirmed }}
+        run: python3 scripts/release-publisher.py guard --repo "$GITHUB_REPOSITORY" --tag "$TAG" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" --attested "$ATTESTED" --check-attempt
+      - name: Require an attestation for each destination not publicly complete
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.candidate.outputs.sha }}
+          CANDIDATE_ATTEMPT: ${{ steps.candidate.outputs.attempt }}
+          SELECT_GITHUB: ${{ steps.vars.outputs.github }}
+          SELECT_MODRINTH: ${{ steps.vars.outputs.modrinth }}
+          SELECT_HANGAR: ${{ steps.vars.outputs.hangar }}
+          MODRINTH_CONFIRMED: ${{ inputs.modrinth_absence_confirmed }}
+          HANGAR_CONFIRMED: ${{ inputs.hangar_absence_confirmed }}
           MODRINTH_PROJECT: ${{ vars.MODRINTH_PROJECT || 'sessionpulse' }}
           HANGAR_PROJECT: ${{ vars.HANGAR_PROJECT || 'SessionPulse' }}
         run: |
-          {
-            echo '## Verified release candidate'
-            echo 'Inspect each registry owner inventory, including drafts, unlisted, scheduled and deleted versions. Record only confirmed absent destinations in the release environment RELEASE_ABSENCE_RECONCILIATION variable before approving publication. An omitted API result is not proof of absence.'
-            echo 'Modrinth: sign in as the project owner and inspect the project Versions management list. Check every available status, including draft, unlisted, scheduled and archived versions, plus any deleted-version view. Confirm this exact version is absent.'
-            echo 'Hangar: sign in as the project owner and inspect the project Versions and management views. Check hidden and soft-deleted versions, plus any deleted-version view. Confirm this exact version is absent.'
-            echo 'If a status or history view is unavailable, resolve that uncertainty before confirming the destination absent; do not infer absence from the public page alone.'
-            echo '```json'
-            cat candidate/manifest.json
-            echo '```'
-            echo '### RELEASE_ABSENCE_RECONCILIATION value'
-            echo 'Copy this record after confirming both destination versions are absent. If a project slug is overridden in the release environment, replace that project value before saving it.'
-            echo '```json'
-            python3 scripts/release-candidate.py reconciliation --directory candidate --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT" --modrinth-project "$MODRINTH_PROJECT" --hangar-project "$HANGAR_PROJECT"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: release-evidence-${{ github.run_id }}-${{ needs.candidate.outputs.attempt }}
-          path: evidence.json
-          if-no-files-found: error
-          retention-days: 30
-
-  publish:
-    name: Approve and Promote Candidate
-    needs: [candidate, evidence]
-    env:
-      CANDIDATE_ATTEMPT: ${{ needs.candidate.outputs.attempt }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    environment: release
-    # Set only after a maintainer checks the owning registry inventories for this
-    # candidate. Public APIs cannot prove that an omitted version does not exist.
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: release-candidate-${{ github.run_id }}-${{ needs.candidate.outputs.attempt }}
-          path: candidate
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: release-evidence-${{ github.run_id }}-${{ needs.candidate.outputs.attempt }}
-          path: .
+          set -euo pipefail
+          lookup() {
+            python3 scripts/release-destination.py "$1" --directory candidate --evidence evidence.json --tag "$TAG" --sha "$SHA" --run-id "$CANDIDATE_RUN" --attempt "$CANDIDATE_ATTEMPT" "${@:2}"
+          }
+          confirmed() { if [ "$1" = true ]; then echo --absence-confirmed; fi; }
+          if [ "$SELECT_GITHUB" = true ]; then lookup github; fi
+          if [ "$SELECT_MODRINTH" = true ]; then
+            lookup modrinth --project "$MODRINTH_PROJECT" --public-only --require-public-project $(confirmed "$MODRINTH_CONFIRMED")
+          fi
+          if [ "$SELECT_HANGAR" = true ]; then
+            lookup hangar --project "$HANGAR_PROJECT" --public-only --require-hangar-target $(confirmed "$HANGAR_CONFIRMED")
+          fi
       - name: Validate Gradle wrapper
+        if: steps.vars.outputs.hangar == 'true'
         uses: gradle/actions/wrapper-validation@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
-      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+      - if: steps.vars.outputs.hangar == 'true'
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           java-version: '21'
           distribution: temurin
-      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
-      - name: Require environment publishing tokens
+      - if: steps.vars.outputs.hangar == 'true'
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      - name: Validate Hangar task graph
+        if: steps.vars.outputs.hangar == 'true'
         env:
-          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
-          HANGAR_API_TOKEN: ${{ secrets.HANGAR_API_TOKEN }}
-          MIGRATED: ${{ vars.RELEASE_SECRETS_MIGRATED }}
-        run: |
-          test "$MIGRATED" = true || { echo '::error::Release token migration is incomplete; see #79'; exit 1; }
-          test -n "$MODRINTH_TOKEN" || { echo '::error::Missing release environment MODRINTH_TOKEN'; exit 1; }
-          test -n "$HANGAR_API_TOKEN" || { echo '::error::Missing release environment HANGAR_API_TOKEN'; exit 1; }
-      - name: Preflight Modrinth before publication
-        env:
-          RELEASE_ABSENCE_RECONCILIATION: ${{ vars.RELEASE_ABSENCE_RECONCILIATION }}
-          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
-          SHA: ${{ needs.candidate.outputs.sha }}
-          PROJECT: ${{ vars.MODRINTH_PROJECT || 'sessionpulse' }}
-        run: python3 scripts/release-destination.py modrinth --project "$PROJECT" --directory candidate --evidence evidence.json --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT" --require-public-project
-      - name: Preflight Hangar before publication
-        id: hangar_preflight
-        env:
-          RELEASE_ABSENCE_RECONCILIATION: ${{ vars.RELEASE_ABSENCE_RECONCILIATION }}
-          HANGAR_API_TOKEN: ${{ secrets.HANGAR_API_TOKEN }}
-          SHA: ${{ needs.candidate.outputs.sha }}
-          PROJECT: ${{ vars.HANGAR_PROJECT || 'SessionPulse' }}
-        run: python3 scripts/release-destination.py hangar --project "$PROJECT" --directory candidate --evidence evidence.json --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT" --require-hangar-target --require-hangar-upload-access
-      - name: Validate Hangar task graph before publication
-        if: steps.hangar_preflight.outputs.state == 'absent'
-        env:
-          VERSION: ${{ needs.candidate.outputs.version }}
-          CHANNEL: ${{ needs.candidate.outputs.hangar_channel }}
+          VERSION: ${{ steps.vars.outputs.version }}
+          CHANNEL: ${{ steps.vars.outputs.hangar_channel }}
           PROJECT: ${{ vars.HANGAR_PROJECT || 'SessionPulse' }}
         run: |
           chmod +x ./gradlew
           ./gradlew publishPluginPublicationToHangar --dry-run -PpluginVersion="$VERSION" -PhangarChannel="$CHANNEL" -PhangarProject="$PROJECT" -PreleaseJar="candidate/SessionPulse-$VERSION.jar" --no-daemon > task-graph.txt
           cat task-graph.txt
           python3 scripts/check-hangar-task-graph.py task-graph.txt
+      - name: Show publication plan
+        env:
+          DESTINATIONS: ${{ inputs.destinations }}
+          CANDIDATE_ATTEMPT: ${{ steps.candidate.outputs.attempt }}
+        run: |
+          {
+            echo "## Publish $TAG"
+            echo "Candidate run $CANDIDATE_RUN, attempt $CANDIDATE_ATTEMPT. Destinations: $DESTINATIONS."
+            echo 'Approving the release environment releases every selected destination job at once.'
+            echo '```json'
+            cat candidate/manifest.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish-github:
+    name: Publish GitHub Release
+    needs: [plan]
+    if: github.ref == format('refs/tags/{0}', inputs.tag) && needs.plan.outputs.github == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: release
+    permissions:
+      contents: write
+      actions: read
+    env:
+      SHA: ${{ needs.plan.outputs.sha }}
+      CANDIDATE_ATTEMPT: ${{ needs.plan.outputs.attempt }}
+      VERSION: ${{ needs.plan.outputs.version }}
+      HANGAR_CHANNEL: ${{ needs.plan.outputs.hangar_channel }}
+      SELECT_GITHUB: ${{ needs.plan.outputs.github }}
+      SELECT_MODRINTH: ${{ needs.plan.outputs.modrinth }}
+      SELECT_HANGAR: ${{ needs.plan.outputs.hangar }}
+      MODRINTH_PROJECT: ${{ vars.MODRINTH_PROJECT || 'sessionpulse' }}
+      HANGAR_PROJECT: ${{ vars.HANGAR_PROJECT || 'SessionPulse' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-candidate-${{ inputs.candidate_run_id }}-${{ needs.plan.outputs.attempt }}
+          path: candidate
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-evidence-${{ inputs.candidate_run_id }}-${{ needs.plan.outputs.attempt }}
+          path: .
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+      - name: Validate Gradle wrapper
+        if: needs.plan.outputs.hangar == 'true'
+        uses: gradle/actions/wrapper-validation@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      - if: needs.plan.outputs.hangar == 'true'
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          java-version: '21'
+          distribution: temurin
+      - if: needs.plan.outputs.hangar == 'true'
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      - name: Preflight every selected destination
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+          HANGAR_API_TOKEN: ${{ secrets.HANGAR_API_TOKEN }}
+          MIGRATED: ${{ vars.RELEASE_SECRETS_MIGRATED }}
+        run: bash scripts/release-preflight.sh
       - name: Check GitHub destination
         id: github
         env:
           GH_TOKEN: ${{ github.token }}
-          SHA: ${{ needs.candidate.outputs.sha }}
-        run: python3 scripts/release-destination.py github --directory candidate --evidence evidence.json --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT"
+        run: python3 scripts/release-destination.py github --directory candidate --evidence evidence.json --tag "$TAG" --sha "$SHA" --run-id "$CANDIDATE_RUN" --attempt "$CANDIDATE_ATTEMPT"
       - name: Publish GitHub release if absent
         if: steps.github.outputs.state == 'absent'
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.candidate.outputs.version }}
-          PRERELEASE: ${{ needs.candidate.outputs.prerelease }}
+          PRERELEASE: ${{ needs.plan.outputs.prerelease }}
         run: |
           set -euo pipefail
-          args=(--title "SessionPulse $GITHUB_REF_NAME" --notes-file candidate/release-body.md)
+          args=(--title "SessionPulse $TAG" --notes-file candidate/release-body.md)
           if [ "$PRERELEASE" = true ]; then args+=(--prerelease --latest=false); else args+=(--latest); fi
-          gh release create "$GITHUB_REF_NAME" "candidate/SessionPulse-$VERSION.jar" "candidate/SessionPulse-$VERSION.jar.sha256" --verify-tag "${args[@]}"
+          gh release create "$TAG" "candidate/SessionPulse-$VERSION.jar" "candidate/SessionPulse-$VERSION.jar.sha256" --verify-tag "${args[@]}"
       - name: Verify GitHub consumer downloads
         env:
           GH_TOKEN: ${{ github.token }}
-          SHA: ${{ needs.candidate.outputs.sha }}
-        run: python3 scripts/release-destination.py github --directory candidate --evidence evidence.json --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT" --require-complete
+        run: python3 scripts/release-destination.py github --directory candidate --evidence evidence.json --tag "$TAG" --sha "$SHA" --run-id "$CANDIDATE_RUN" --attempt "$CANDIDATE_ATTEMPT" --require-complete
+
+  publish-modrinth:
+    name: Publish Modrinth Version
+    needs: [plan]
+    if: github.ref == format('refs/tags/{0}', inputs.tag) && needs.plan.outputs.modrinth == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: release
+    permissions:
+      contents: read
+      actions: read
+    env:
+      SHA: ${{ needs.plan.outputs.sha }}
+      CANDIDATE_ATTEMPT: ${{ needs.plan.outputs.attempt }}
+      VERSION: ${{ needs.plan.outputs.version }}
+      HANGAR_CHANNEL: ${{ needs.plan.outputs.hangar_channel }}
+      SELECT_GITHUB: ${{ needs.plan.outputs.github }}
+      SELECT_MODRINTH: ${{ needs.plan.outputs.modrinth }}
+      SELECT_HANGAR: ${{ needs.plan.outputs.hangar }}
+      MODRINTH_PROJECT: ${{ vars.MODRINTH_PROJECT || 'sessionpulse' }}
+      HANGAR_PROJECT: ${{ vars.HANGAR_PROJECT || 'SessionPulse' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-candidate-${{ inputs.candidate_run_id }}-${{ needs.plan.outputs.attempt }}
+          path: candidate
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-evidence-${{ inputs.candidate_run_id }}-${{ needs.plan.outputs.attempt }}
+          path: .
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+      - name: Validate Gradle wrapper
+        if: needs.plan.outputs.hangar == 'true'
+        uses: gradle/actions/wrapper-validation@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      - if: needs.plan.outputs.hangar == 'true'
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          java-version: '21'
+          distribution: temurin
+      - if: needs.plan.outputs.hangar == 'true'
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      - name: Preflight every selected destination
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+          HANGAR_API_TOKEN: ${{ secrets.HANGAR_API_TOKEN }}
+          MIGRATED: ${{ vars.RELEASE_SECRETS_MIGRATED }}
+        run: bash scripts/release-preflight.sh
       - name: Check Modrinth destination
         id: modrinth
         env:
-          RELEASE_ABSENCE_RECONCILIATION: ${{ vars.RELEASE_ABSENCE_RECONCILIATION }}
           MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
-          SHA: ${{ needs.candidate.outputs.sha }}
-          PROJECT: ${{ vars.MODRINTH_PROJECT || 'sessionpulse' }}
-        run: python3 scripts/release-destination.py modrinth --project "$PROJECT" --directory candidate --evidence evidence.json --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT"
+          CONFIRMED: ${{ inputs.modrinth_absence_confirmed }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [ "$CONFIRMED" = true ]; then args+=(--absence-confirmed); fi
+          python3 scripts/release-destination.py modrinth --project "$MODRINTH_PROJECT" --directory candidate --evidence evidence.json --tag "$TAG" --sha "$SHA" --run-id "$CANDIDATE_RUN" --attempt "$CANDIDATE_ATTEMPT" --require-public-project "${args[@]}"
+      # Re-running this job alone reuses plan's outputs, so the attempt is checked here.
+      - name: Refuse a reused Modrinth attestation
+        if: steps.modrinth.outputs.state == 'absent'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ATTESTED: ${{ inputs.modrinth_absence_confirmed }}
+        run: python3 scripts/release-publisher.py guard --repo "$GITHUB_REPOSITORY" --tag "$TAG" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" --attested "$ATTESTED" --check-attempt
       - name: Publish Modrinth if absent
         if: steps.modrinth.outputs.state == 'absent'
         uses: Kira-NT/mc-publish@c23376546a97f5ba7984e94445da359459b14419 # v3.3.2
@@ -366,11 +344,11 @@ jobs:
           modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
           modrinth-featured: false
           modrinth-unfeature-mode: none
-          name: SessionPulse ${{ needs.candidate.outputs.version }}
-          version: ${{ needs.candidate.outputs.version }}
-          version-type: ${{ needs.candidate.outputs.channel }}
+          name: SessionPulse ${{ needs.plan.outputs.version }}
+          version: ${{ needs.plan.outputs.version }}
+          version-type: ${{ needs.plan.outputs.channel }}
           changelog-file: candidate/release-notes.md
-          files: candidate/SessionPulse-${{ needs.candidate.outputs.version }}.jar
+          files: candidate/SessionPulse-${{ needs.plan.outputs.version }}.jar
           dependencies: |
             essentialsx(optional){modrinth:hXiIvTyT}
           # Modrinth combines flat loader/version filters. Folia has no 26.3
@@ -398,48 +376,102 @@ jobs:
           java: 21
       - name: Verify Modrinth consumer download
         env:
-          RELEASE_ABSENCE_RECONCILIATION: ${{ vars.RELEASE_ABSENCE_RECONCILIATION }}
           MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
-          SHA: ${{ needs.candidate.outputs.sha }}
           VISIBILITY_RETRIES: ${{ steps.modrinth.outputs.state == 'absent' && '6' || '0' }}
-          PROJECT: ${{ vars.MODRINTH_PROJECT || 'sessionpulse' }}
-        run: python3 scripts/release-destination.py modrinth --project "$PROJECT" --directory candidate --evidence evidence.json --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT" --require-complete --modrinth-visibility-retries "$VISIBILITY_RETRIES"
+        run: python3 scripts/release-destination.py modrinth --project "$MODRINTH_PROJECT" --directory candidate --evidence evidence.json --tag "$TAG" --sha "$SHA" --run-id "$CANDIDATE_RUN" --attempt "$CANDIDATE_ATTEMPT" --require-complete --modrinth-visibility-retries "$VISIBILITY_RETRIES"
+
+  publish-hangar:
+    name: Publish Hangar Version
+    needs: [plan]
+    if: github.ref == format('refs/tags/{0}', inputs.tag) && needs.plan.outputs.hangar == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: release
+    permissions:
+      contents: read
+      actions: read
+    env:
+      SHA: ${{ needs.plan.outputs.sha }}
+      CANDIDATE_ATTEMPT: ${{ needs.plan.outputs.attempt }}
+      VERSION: ${{ needs.plan.outputs.version }}
+      HANGAR_CHANNEL: ${{ needs.plan.outputs.hangar_channel }}
+      SELECT_GITHUB: ${{ needs.plan.outputs.github }}
+      SELECT_MODRINTH: ${{ needs.plan.outputs.modrinth }}
+      SELECT_HANGAR: ${{ needs.plan.outputs.hangar }}
+      MODRINTH_PROJECT: ${{ vars.MODRINTH_PROJECT || 'sessionpulse' }}
+      HANGAR_PROJECT: ${{ vars.HANGAR_PROJECT || 'SessionPulse' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-candidate-${{ inputs.candidate_run_id }}-${{ needs.plan.outputs.attempt }}
+          path: candidate
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-evidence-${{ inputs.candidate_run_id }}-${{ needs.plan.outputs.attempt }}
+          path: .
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          java-version: '21'
+          distribution: temurin
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      - name: Preflight every selected destination
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+          HANGAR_API_TOKEN: ${{ secrets.HANGAR_API_TOKEN }}
+          MIGRATED: ${{ vars.RELEASE_SECRETS_MIGRATED }}
+        run: bash scripts/release-preflight.sh
       - name: Check Hangar destination
         id: hangar
         env:
-          RELEASE_ABSENCE_RECONCILIATION: ${{ vars.RELEASE_ABSENCE_RECONCILIATION }}
           HANGAR_API_TOKEN: ${{ secrets.HANGAR_API_TOKEN }}
-          SHA: ${{ needs.candidate.outputs.sha }}
-          PROJECT: ${{ vars.HANGAR_PROJECT || 'SessionPulse' }}
-        run: python3 scripts/release-destination.py hangar --project "$PROJECT" --directory candidate --evidence evidence.json --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT"
+          CONFIRMED: ${{ inputs.hangar_absence_confirmed }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [ "$CONFIRMED" = true ]; then args+=(--absence-confirmed); fi
+          python3 scripts/release-destination.py hangar --project "$HANGAR_PROJECT" --directory candidate --evidence evidence.json --tag "$TAG" --sha "$SHA" --run-id "$CANDIDATE_RUN" --attempt "$CANDIDATE_ATTEMPT" "${args[@]}"
+      # Re-running this job alone reuses plan's outputs, so the attempt is checked here.
+      - name: Refuse a reused Hangar attestation
+        if: steps.hangar.outputs.state == 'absent'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ATTESTED: ${{ inputs.hangar_absence_confirmed }}
+        run: python3 scripts/release-publisher.py guard --repo "$GITHUB_REPOSITORY" --tag "$TAG" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" --attested "$ATTESTED" --check-attempt
       - name: Publish Hangar if absent
         if: steps.hangar.outputs.state == 'absent'
         env:
-          RELEASE_ABSENCE_RECONCILIATION: ${{ vars.RELEASE_ABSENCE_RECONCILIATION }}
-          SHA: ${{ needs.candidate.outputs.sha }}
-          VERSION: ${{ needs.candidate.outputs.version }}
-          CHANNEL: ${{ needs.candidate.outputs.hangar_channel }}
-          PROJECT: ${{ vars.HANGAR_PROJECT || 'SessionPulse' }}
           HANGAR_API_TOKEN: ${{ secrets.HANGAR_API_TOKEN }}
+          CONFIRMED: ${{ inputs.hangar_absence_confirmed }}
         run: |
           set -euo pipefail
-          python3 scripts/release-destination.py hangar --project "$PROJECT" --directory candidate --evidence evidence.json --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT" --require-absent
+          args=()
+          if [ "$CONFIRMED" = true ]; then args+=(--absence-confirmed); fi
+          python3 scripts/release-destination.py hangar --project "$HANGAR_PROJECT" --directory candidate --evidence evidence.json --tag "$TAG" --sha "$SHA" --run-id "$CANDIDATE_RUN" --attempt "$CANDIDATE_ATTEMPT" "${args[@]}" --require-absent
           mkdir -p build
           cp candidate/release-notes.md build/release-notes.md
           BEFORE="$(sha256sum "candidate/SessionPulse-$VERSION.jar")"
-          ./gradlew publishPluginPublicationToHangar -PpluginVersion="$VERSION" -PhangarChannel="$CHANNEL" -PhangarProject="$PROJECT" -PreleaseJar="candidate/SessionPulse-$VERSION.jar" --no-daemon
+          ./gradlew publishPluginPublicationToHangar -PpluginVersion="$VERSION" -PhangarChannel="$HANGAR_CHANNEL" -PhangarProject="$HANGAR_PROJECT" -PreleaseJar="candidate/SessionPulse-$VERSION.jar" --no-daemon
           test "$BEFORE" = "$(sha256sum "candidate/SessionPulse-$VERSION.jar")"
       - name: Verify Hangar receipt before page sync
         env:
-          RELEASE_ABSENCE_RECONCILIATION: ${{ vars.RELEASE_ABSENCE_RECONCILIATION }}
           HANGAR_API_TOKEN: ${{ secrets.HANGAR_API_TOKEN }}
-          SHA: ${{ needs.candidate.outputs.sha }}
-          PROJECT: ${{ vars.HANGAR_PROJECT || 'SessionPulse' }}
-        run: |
-          python3 scripts/release-destination.py hangar --project "$PROJECT" --directory candidate --evidence evidence.json --tag "$GITHUB_REF_NAME" --sha "$SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CANDIDATE_ATTEMPT" --require-complete
+        run: python3 scripts/release-destination.py hangar --project "$HANGAR_PROJECT" --directory candidate --evidence evidence.json --tag "$TAG" --sha "$SHA" --run-id "$CANDIDATE_RUN" --attempt "$CANDIDATE_ATTEMPT" --require-complete
+      # The project page is shared state: an older version must not overwrite a newer one's page.
+      - name: Check this is the newest public version on its channel
+        id: page
+        run: python3 scripts/release-publisher.py hangar-sync --project "$HANGAR_PROJECT" --version "$VERSION" --channel "$HANGAR_CHANNEL"
       - name: Sync Hangar resource page
+        if: steps.page.outputs.sync == 'true'
         env:
-          PROJECT: ${{ vars.HANGAR_PROJECT || 'SessionPulse' }}
           HANGAR_API_TOKEN: ${{ secrets.HANGAR_API_TOKEN }}
-        run: |
-          ./gradlew syncPluginPublicationMainResourcePagePageToHangar -PhangarProject="$PROJECT" --no-daemon
+        run: ./gradlew syncPluginPublicationMainResourcePagePageToHangar -PhangarProject="$HANGAR_PROJECT" --no-daemon

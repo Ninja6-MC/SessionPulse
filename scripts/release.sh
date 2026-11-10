@@ -1,16 +1,22 @@
 #!/usr/bin/env bash
 #
-# Cuts a release tag and pushes it. The push starts .github/workflows/release.yml, which
-# builds and smoke-tests the candidate and then waits on the protected `release`
+# Cuts a release tag, pushes it and dispatches the publisher for it. The push starts
+# .github/workflows/release-candidate.yml, which builds and smoke-tests the candidate and
+# publishes nothing. Once it passes, this script prints the registry owner-inventory
+# checklist, asks for each registry's absence attestation and starts
+# .github/workflows/release.yml on the tag, which waits on the protected `release`
 # environment before publishing to GitHub Releases, Modrinth and Hangar.
 #
 # Usage: scripts/release.sh <version> [--dry-run]
+#        scripts/release.sh <version> --resume <destinations> --candidate-run <run-id> [--dry-run]
 #
 #   scripts/release.sh 1.0.0
-#   scripts/release.sh 0.2.0-beta.2
 #   scripts/release.sh 0.2.0-beta.2 --dry-run
+#   scripts/release.sh 0.2.0-beta.2 --resume hangar --candidate-run <candidate-run-id>
 #
-# Pass the version without the leading "v"; the tag gets it.
+# Pass the version without the leading "v"; the tag gets it. --resume skips tagging and
+# dispatches the publisher again for an existing tag, for the comma-separated destinations
+# given (github, modrinth, hangar) and the candidate run that built the tag.
 #
 # Why this exists rather than `git tag && git push`: a tag is the only irreversible step
 # in the release process. Once approved it publishes to two registries, and unpublishing
@@ -20,9 +26,9 @@
 # tagging a commit CI has not passed, tagging an unsuffixed or -rc version below 1.0.0,
 # or tagging a stable version whose changelog section does not exist.
 #
-# The tag grammar and the changelog lookup are copies of the ones in release.yml, and
-# scripts/tests/test_release_script.py fails if they drift apart. CI applies them only
-# after the tag is public; this applies them before.
+# The tag grammar and the changelog lookup are copies of the ones in
+# release-candidate.yml, and scripts/tests/test_release_script.py fails if they drift
+# apart. CI applies them only after the tag is public; this applies them before.
 #
 # Sourcing this file defines the functions without running anything, which is how the
 # tests exercise the version and changelog rules.
@@ -30,6 +36,7 @@
 set -euo pipefail
 
 REPO="Ninja6-MC/SessionPulse"
+ALL_DESTINATIONS="github,modrinth,hangar"
 
 RED=$'\033[31m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; RESET=$'\033[0m'
 
@@ -40,7 +47,7 @@ warn() { echo "${YELLOW}warn${RESET} $*"; }
 blank() { [ -z "${1//[[:space:]]/}" ]; }
 
 # ---------------------------------------------------------------------------
-# The tag grammar release.yml enforces, plus the two rules from section 1 of
+# The tag grammar release-candidate.yml enforces, plus the two rules from section 1 of
 # RELEASE_PROCESS.md that the workflow cannot: below 1.0.0 every release is a
 # pre-release, and no release candidate is cut before 1.0.0.
 # ---------------------------------------------------------------------------
@@ -60,13 +67,13 @@ check_version() {
      Use -alpha.N or -beta.N until 1.0.0; the first release candidate is 1.0.0-rc.1." ;;
       *)
         fail "'$version' is an unsuffixed version below 1.0.0.
-     release.yml publishes every unsuffixed tag as a stable release. Use -alpha.N or -beta.N." ;;
+     The release workflows publish every unsuffixed tag as a stable release. Use -alpha.N or -beta.N." ;;
     esac
   fi
 }
 
 # ---------------------------------------------------------------------------
-# The changelog lookup from release.yml's "Collect release notes" step. extract()
+# The changelog lookup from release-candidate.yml's "Collect release notes" step. extract()
 # must stay identical to the workflow's; the test compares the two.
 #
 # find_notes sets NOTES and NOTES_SECTION. A stable version needs its own section;
@@ -150,21 +157,165 @@ check_ci() {
   ok "CI passed on ${sha:0:7}"
 }
 
-main() {
-  local version="" dry_run=0 arg
-  for arg in "$@"; do
-    case "$arg" in
-      --dry-run) dry_run=1 ;;
-      -*) echo "Unknown option: $arg" >&2; exit 2 ;;
-      *) [ -z "$version" ] || { echo "Only one version may be given." >&2; exit 2; }
-         version="${arg#v}" ;;
+# ---------------------------------------------------------------------------
+# Publisher dispatch. An absence attestation belongs to one dispatch of release.yml
+# and is never stored, so it is asked for here, each time, with no default.
+# ---------------------------------------------------------------------------
+check_destinations() {
+  local value="$1" name seen=","
+  if [[ ! "$value" =~ ^(github|modrinth|hangar)(,(github|modrinth|hangar))*$ ]]; then
+    fail "'$value' is not a destination list.
+     Expected a comma-separated list of github, modrinth and hangar, such as: modrinth,hangar"
+  fi
+  IFS=',' read -r -a names <<<"$value"
+  for name in "${names[@]}"; do
+    case "$seen" in *",$name,"*) fail "'$name' is listed twice in '$value'." ;; esac
+    seen="$seen$name,"
+  done
+}
+
+selected() { case ",$1," in *",$2,"*) return 0 ;; esac; return 1; }
+
+print_inventory_checklist() {
+  local version="$1" destinations="$2"
+  echo
+  echo "Owner inventory checklist for $version. An omitted API result is not proof of absence."
+  if selected "$destinations" modrinth; then
+    echo "  Modrinth: sign in as the project owner and open the project's Versions management list."
+    echo "            Check every status, including draft, unlisted, scheduled and archived, and any"
+    echo "            deleted-version view. Is $version there in any state?"
+  fi
+  if selected "$destinations" hangar; then
+    echo "  Hangar:   sign in as the project owner and open the Versions and management views."
+    echo "            Check hidden and soft-deleted versions and any deleted-version view."
+    echo "            Is $version there in any state?"
+  fi
+  echo "  If a view is unavailable, resolve that before answering; do not infer absence from the"
+  echo "  public page. A version that exists in any state is 'present': the publisher then"
+  echo "  verifies it and skips it, or stops if its bytes or metadata differ."
+  echo
+}
+
+# Prints true or false. No default: anything but 'absent' or 'present' asks again, and
+# end of input fails rather than choosing for the maintainer.
+ask_absence() {
+  local destination="$1" version="$2" answer
+  while true; do
+    read -r -p "Is $destination $version absent from the owner inventory in every state? Type absent or present: " answer \
+      || fail "no answer for $destination. Nothing was dispatched."
+    case "${answer%$'\r'}" in
+      absent) echo true; return 0 ;;
+      present) echo false; return 0 ;;
+      *) echo "Type absent or present." >&2 ;;
     esac
+  done
+}
+
+wait_for_candidate() {
+  local tag="$1" sha="$2" id="" tries=0
+  echo "Waiting for the Release Candidate run for $tag..." >&2
+  while [ -z "$id" ]; do
+    id="$(gh run list -R "$REPO" --workflow release-candidate.yml --event push --branch "$tag" \
+      --limit 5 --json databaseId,headSha \
+      --jq "[.[] | select(.headSha == \"$sha\")][0].databaseId // empty")" || id=""
+    if [ -z "$id" ]; then
+      tries=$((tries + 1))
+      [ "$tries" -lt 36 ] || fail "no Release Candidate run appeared for $tag. Check:
+     https://github.com/$REPO/actions/workflows/release-candidate.yml"
+      sleep 5
+    fi
+  done
+  gh run watch "$id" -R "$REPO" --exit-status >&2 \
+    || fail "Release Candidate run $id did not succeed. Nothing was dispatched; fix it and use --resume."
+  echo "$id"
+}
+
+dispatch_publisher() {
+  local tag="$1" candidate_run="$2" destinations="$3" dry_run="$4" version="${1#v}"
+  local modrinth=false hangar=false nonce url="" tries=0
+
+  print_inventory_checklist "$version" "$destinations"
+  if selected "$destinations" modrinth; then modrinth="$(ask_absence Modrinth "$version")"; fi
+  if selected "$destinations" hangar; then hangar="$(ask_absence Hangar "$version")"; fi
+
+  echo
+  echo "  tag            $tag"
+  echo "  candidate run  $candidate_run"
+  echo "  destinations   $destinations"
+  echo "  attested absent: modrinth=$modrinth hangar=$hangar"
+  echo
+
+  if [ "$dry_run" -eq 1 ]; then
+    echo "${YELLOW}Dry run: the publisher was not dispatched.${RESET}"
+    return 0
+  fi
+
+  nonce="$(date +%s)-$$-$RANDOM"
+  gh workflow run release.yml -R "$REPO" --ref "$tag" \
+    -f tag="$tag" -f candidate_run_id="$candidate_run" -f destinations="$destinations" \
+    -f modrinth_absence_confirmed="$modrinth" -f hangar_absence_confirmed="$hangar" \
+    -f nonce="$nonce"
+  ok "dispatched Publish Release for $tag"
+
+  # gh workflow run returns no run ID; the nonce in run-name identifies this dispatch.
+  while [ -z "$url" ] && [ "$tries" -lt 24 ]; do
+    sleep 5
+    tries=$((tries + 1))
+    url="$(gh run list -R "$REPO" --workflow release.yml --event workflow_dispatch --limit 20 \
+      --json displayTitle,url --jq ".[] | select(.displayTitle | endswith(\" $nonce\")) | .url" \
+      2>/dev/null | head -1)" || url=""
+  done
+  echo
+  if [ -n "$url" ]; then
+    echo "Publisher run: $url"
+  else
+    echo "Find the run named 'Publish $tag $nonce':"
+    echo "  https://github.com/$REPO/actions/workflows/release.yml"
+  fi
+  echo "Approve the release environment in the browser once the plan job has passed."
+  echo "See RELEASE_PROCESS.md, step 3, for verification and retry rules."
+}
+
+resume() {
+  local version="$1" destinations="$2" candidate_run="$3" dry_run="$4" tag="v$1" rc=0
+  check_version "$version"
+  check_destinations "$destinations"
+  [[ "$candidate_run" =~ ^[1-9][0-9]*$ ]] || fail "--candidate-run takes the Release Candidate run ID."
+  command -v gh >/dev/null 2>&1 || fail "gh is required to dispatch the publisher."
+  git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1 || rc=$?
+  [ "$rc" -eq 0 ] || fail "tag '$tag' is not on origin (git ls-remote exit $rc). Nothing to resume."
+  ok "tag '$tag' is on origin"
+  dispatch_publisher "$tag" "$candidate_run" "$destinations" "$dry_run"
+}
+
+main() {
+  local version="" dry_run=0 resume_destinations="" candidate_run=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --dry-run) dry_run=1 ;;
+      --resume)
+        [ "$#" -ge 2 ] || { echo "--resume takes a destination list." >&2; exit 2; }
+        resume_destinations="$2"; shift ;;
+      --candidate-run)
+        [ "$#" -ge 2 ] || { echo "--candidate-run takes a run ID." >&2; exit 2; }
+        candidate_run="$2"; shift ;;
+      -*) echo "Unknown option: $1" >&2; exit 2 ;;
+      *) [ -z "$version" ] || { echo "Only one version may be given." >&2; exit 2; }
+         version="${1#v}" ;;
+    esac
+    shift
   done
 
   if [ -z "$version" ]; then
     echo "Usage: scripts/release.sh <version> [--dry-run]" >&2
-    echo "       scripts/release.sh 0.2.0-beta.2 --dry-run" >&2
+    echo "       scripts/release.sh <version> --resume <destinations> --candidate-run <run-id> [--dry-run]" >&2
     exit 2
+  fi
+  if [ -n "$resume_destinations" ] || [ -n "$candidate_run" ]; then
+    [ -n "$resume_destinations" ] && [ -n "$candidate_run" ] \
+      || { echo "--resume and --candidate-run are used together." >&2; exit 2; }
+    resume "$version" "$resume_destinations" "$candidate_run" "$dry_run"
+    return
   fi
 
   local tag="v$version"
@@ -240,7 +391,7 @@ main() {
   # 7. CI green on this exact commit.
   check_ci "$local_sha"
 
-  # 8. The changelog gate release.yml applies, applied here first.
+  # 8. The changelog gate release-candidate.yml applies, applied here first.
   check_notes "$version"
 
   # 9. Show what is about to happen. Everything above this line is reversible;
@@ -273,8 +424,9 @@ main() {
     exit 0
   fi
 
-  echo "Pushing this tag starts Publish Release. It builds and smoke-tests the"
-  echo "candidate, then waits for approval on the protected release environment."
+  echo "Pushing this tag starts Release Candidate, which builds and smoke-tests the"
+  echo "candidate. This script then waits for it, asks for the registry attestations and"
+  echo "dispatches Publish Release, which waits for approval on the release environment."
   echo
   local confirm
   read -r -p "Type the tag to confirm: " confirm
@@ -290,11 +442,15 @@ main() {
   git push origin "refs/tags/$tag"
   ok "pushed $tag"
 
-  echo
-  echo "Follow the run, inspect the verified candidate summary and complete the"
-  echo "registry inventory audit before approving the release environment:"
-  echo "  https://github.com/$REPO/actions/workflows/release.yml"
-  echo "See RELEASE_PROCESS.md, step 3, for verification and retry rules."
+  if ! command -v gh >/dev/null 2>&1; then
+    warn "gh is not installed. When Release Candidate passes, dispatch the publisher with:
+       scripts/release.sh $version --resume $ALL_DESTINATIONS --candidate-run <run-id>"
+    return 0
+  fi
+  local candidate_run
+  candidate_run="$(wait_for_candidate "$tag" "$local_sha")"
+  ok "Release Candidate run $candidate_run passed"
+  dispatch_publisher "$tag" "$candidate_run" "$ALL_DESTINATIONS" 0
 }
 
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
