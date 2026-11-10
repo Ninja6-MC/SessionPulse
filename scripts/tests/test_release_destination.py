@@ -46,10 +46,6 @@ class ReleaseDestinationTest(unittest.TestCase):
                                                        "sha256Hash": MANIFEST["files"]["SessionPulse-1.2.3-rc.1.jar"]},
                                        "downloadUrl": "https://hangarcdn.papermc.io/file.jar"}}}
 
-    def absence_record(self, destination="modrinth", project="sessionpulse"):
-        return {**{key: MANIFEST[key] for key in ("candidate_id", "tag", "version", "source_sha")},
-                "confirmed_absent": {destination: project}}
-
     @patch.object(destination.urllib.request, "urlopen")
     def test_hangar_auth_failure_never_exposes_key_or_url(self, urlopen):
         secret = "credential-never-log-this"
@@ -88,22 +84,61 @@ class ReleaseDestinationTest(unittest.TestCase):
                 destination.main()
         github.assert_not_called()
 
+    def cli(self, *extra):
+        return ["release-destination.py", *extra, "--directory", str(self.directory),
+                "--evidence", "evidence.json", "--tag", MANIFEST["tag"], "--sha", MANIFEST["source_sha"],
+                "--run-id", "52", "--attempt", "1"]
+
+    @patch.object(destination, "hangar", return_value="absent")
+    @patch.object(destination, "modrinth", return_value="absent")
     @patch.object(destination, "tag_sha", return_value="a" * 40)
     @patch.object(destination.candidate, "verify", return_value=MANIFEST)
     @patch.object(destination.candidate, "check_evidence")
-    def test_recovery_inventory_requires_candidate_bound_hangar_attestation(self, check_evidence, verify, tag_sha):
-        args = ["release-destination.py", "inventory", "--project", "SessionPulse",
-                "--directory", str(self.directory), "--evidence", "evidence.json",
-                "--tag", MANIFEST["tag"], "--sha", MANIFEST["source_sha"],
-                "--run-id", "52", "--attempt", "1"]
-        with patch.object(destination.sys, "argv", args):
-            with patch.dict(destination.os.environ, {"RELEASE_ABSENCE_RECONCILIATION": json.dumps(
-                    self.absence_record("hangar", "other-project"))}):
-                with self.assertRaisesRegex(ValueError, "does not confirm hangar project SessionPulse"):
-                    destination.main()
-            with patch.dict(destination.os.environ, {"RELEASE_ABSENCE_RECONCILIATION": json.dumps(
-                    self.absence_record("hangar", "SessionPulse"))}):
+    def test_cli_passes_dispatch_attestation_and_public_mode(self, check_evidence, verify, tag_sha, modrinth, hangar):
+        with patch.dict(destination.os.environ, {"GITHUB_REPOSITORY": "Ninja6-MC/SessionPulse"}):
+            with patch.object(destination.sys, "argv", self.cli("modrinth", "--project", "sessionpulse")):
                 destination.main()
+            modrinth.assert_called_with(MANIFEST, "sessionpulse", self.directory, False, False)
+            with patch.object(destination.sys, "argv", self.cli("modrinth", "--project", "sessionpulse",
+                                                                "--absence-confirmed", "--public-only")):
+                destination.main()
+            modrinth.assert_called_with(MANIFEST, "sessionpulse", self.directory, True, True)
+            with patch.object(destination.sys, "argv", self.cli("hangar", "--project", "SessionPulse", "--absence-confirmed")):
+                destination.main()
+            hangar.assert_called_with(MANIFEST, "SessionPulse", self.directory, True, False)
+
+    @patch.object(destination, "hangar_ready")
+    @patch.object(destination, "modrinth_ready")
+    @patch.object(destination, "hangar")
+    @patch.object(destination, "modrinth")
+    @patch.object(destination, "tag_sha", return_value="a" * 40)
+    @patch.object(destination.candidate, "verify", return_value=MANIFEST)
+    @patch.object(destination.candidate, "check_evidence")
+    def test_credential_preflight_never_reads_destination_state(self, check_evidence, verify, tag_sha, modrinth,
+                                                                hangar, modrinth_ready, hangar_ready):
+        with patch.dict(destination.os.environ, {"GITHUB_REPOSITORY": "Ninja6-MC/SessionPulse"}):
+            with patch.object(destination.sys, "argv", self.cli("modrinth", "--project", "sessionpulse", "--credentials-only")):
+                destination.main()
+            with patch.object(destination.sys, "argv", self.cli("hangar", "--project", "SessionPulse", "--credentials-only")):
+                destination.main()
+            for invalid in (("--absence-confirmed",), ("--require-complete",), ("--public-only",)):
+                with patch.object(destination.sys, "argv", self.cli("modrinth", "--project", "sessionpulse",
+                                                                    "--credentials-only", *invalid)):
+                    with self.assertRaises(ValueError):
+                        destination.main()
+        modrinth_ready.assert_called_once_with("sessionpulse")
+        hangar_ready.assert_called_once_with(MANIFEST, "SessionPulse", "Ninja6-MC")
+        modrinth.assert_not_called()
+        hangar.assert_not_called()
+
+    @patch.object(destination, "request")
+    def test_modrinth_credentials_need_token_and_approved_project(self, request):
+        request.side_effect = [(200, []), (200, {"id": "p", "status": "approved"})]
+        destination.modrinth_ready("sessionpulse")
+        self.assertEqual(request.call_args_list[0].args[1], {"Authorization": "test-token"})
+        with patch.dict(destination.os.environ, {"MODRINTH_TOKEN": ""}):
+            with self.assertRaisesRegex(ValueError, "requires the release environment token"):
+                destination.modrinth_ready("sessionpulse")
 
     @patch.object(destination.subprocess, "run")
     def test_github_retry_verifies_downloads_and_rejects_changed_bytes(self, run):
@@ -145,35 +180,40 @@ class ReleaseDestinationTest(unittest.TestCase):
             destination.github(self.directory, manifest, "Ninja6-MC/SessionPulse")
 
     @patch.object(destination, "request")
-    def test_modrinth_omitted_draft_is_uncertain_without_reconciliation(self, request):
+    def test_modrinth_omitted_version_needs_this_dispatch_attestation(self, request):
         request.return_value = (200, [{"version_number": "1.2.2"}])
-        with self.assertRaisesRegex(ValueError, "Missing release environment RELEASE_ABSENCE_RECONCILIATION"):
+        with self.assertRaisesRegex(ValueError, "modrinth_absence_confirmed=true"):
             destination.modrinth(MANIFEST, "sessionpulse", self.directory)
-        with patch.dict(destination.os.environ, {"RELEASE_ABSENCE_RECONCILIATION": json.dumps(self.absence_record())}):
-            self.assertEqual(destination.modrinth(MANIFEST, "sessionpulse", self.directory), "absent")
+        self.assertEqual(destination.modrinth(MANIFEST, "sessionpulse", self.directory, confirmed=True), "absent")
 
-    def test_absence_confirmation_is_bound_to_candidate_and_project(self):
-        for key in ("candidate_id", "tag", "version", "source_sha"):
-            record = self.absence_record()
-            record[key] = "different"
-            with patch.dict(destination.os.environ, {"RELEASE_ABSENCE_RECONCILIATION": json.dumps(record)}):
-                with self.assertRaisesRegex(ValueError, "mismatched"):
-                    destination.reconciled_absence(MANIFEST, "modrinth", "sessionpulse")
-        with patch.dict(destination.os.environ, {"RELEASE_ABSENCE_RECONCILIATION": json.dumps(self.absence_record())}):
-            with self.assertRaisesRegex(ValueError, "does not confirm"):
-                destination.reconciled_absence(MANIFEST, "hangar", "SessionPulse")
-            with self.assertRaisesRegex(ValueError, "does not confirm"):
-                destination.reconciled_absence(MANIFEST, "modrinth", "different-project")
+    @patch.object(destination, "request")
+    def test_public_only_lookup_sends_no_token(self, request):
+        request.return_value = (200, [])
+        with patch.dict(destination.os.environ, {"MODRINTH_TOKEN": ""}):
+            with self.assertRaisesRegex(ValueError, "absence_confirmed"):
+                destination.modrinth(MANIFEST, "sessionpulse", self.directory, anonymous=True)
+        self.assertEqual(request.call_args.args[1], {})
+        request.return_value = (404, None)
+        with patch.object(destination, "hangar_session") as session:
+            with self.assertRaisesRegex(ValueError, "hangar_absence_confirmed=true"):
+                destination.hangar(MANIFEST, "SessionPulse", self.directory, anonymous=True)
+            session.assert_not_called()
+        self.assertEqual(request.call_args.args[1], {})
 
-    def test_reconciliation_missing_malformed_and_matching(self):
-        with patch.dict(destination.os.environ, {"RELEASE_ABSENCE_RECONCILIATION": ""}):
-            with self.assertRaisesRegex(ValueError, "Missing release environment RELEASE_ABSENCE_RECONCILIATION"):
-                destination.reconciled_absence(MANIFEST, "modrinth", "sessionpulse")
-        with patch.dict(destination.os.environ, {"RELEASE_ABSENCE_RECONCILIATION": "{"}):
-            with self.assertRaisesRegex(ValueError, "malformed JSON"):
-                destination.reconciled_absence(MANIFEST, "modrinth", "sessionpulse")
-        with patch.dict(destination.os.environ, {"RELEASE_ABSENCE_RECONCILIATION": json.dumps(self.absence_record())}):
-            self.assertEqual(destination.reconciled_absence(MANIFEST, "modrinth", "sessionpulse"), "absent")
+    @patch.object(destination.urllib.request, "urlopen")
+    @patch.object(destination, "request")
+    def test_attestation_is_needed_only_when_absent(self, request, urlopen):
+        urlopen.return_value.__enter__.side_effect = lambda: io.BytesIO(b"candidate")
+        version = self.modrinth_version()
+        request.side_effect = lambda url, headers=None: (200, [version]) if url.endswith("/version") else (200, version)
+        self.assertEqual(destination.modrinth(MANIFEST, "sessionpulse", self.directory, confirmed=False), "complete")
+        self.assertEqual(destination.modrinth(MANIFEST, "sessionpulse", self.directory, confirmed=True), "complete")
+        request.side_effect = None
+        request.return_value = (200, self.hangar_version())
+        self.assertEqual(destination.hangar({**MANIFEST, "hangar_channel": "Beta"}, "SessionPulse", self.directory), "complete")
+        with self.assertRaisesRegex(ValueError, "does not prove it is absent"):
+            destination.attested_absence("hangar", False)
+        self.assertEqual(destination.attested_absence("hangar", True), "absent")
 
     @patch.object(destination, "request")
     def test_preflight_requires_anonymous_modrinth_project(self, request):
@@ -349,10 +389,9 @@ class ReleaseDestinationTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "conflicts"):
             destination.hangar({**MANIFEST, "hangar_channel": "Beta"}, "SessionPulse", self.directory)
         request.return_value = (404, None)
-        with self.assertRaisesRegex(ValueError, "Missing release environment RELEASE_ABSENCE_RECONCILIATION"):
+        with self.assertRaisesRegex(ValueError, "hangar_absence_confirmed=true"):
             destination.hangar({**MANIFEST, "hangar_channel": "Beta"}, "SessionPulse", self.directory)
-        with patch.dict(destination.os.environ, {"RELEASE_ABSENCE_RECONCILIATION": json.dumps(self.absence_record("hangar", "SessionPulse"))}):
-            self.assertEqual(destination.hangar({**MANIFEST, "hangar_channel": "Beta"}, "SessionPulse", self.directory), "absent")
+        self.assertEqual(destination.hangar({**MANIFEST, "hangar_channel": "Beta"}, "SessionPulse", self.directory, True), "absent")
 
     @patch.object(destination.urllib.request, "urlopen")
     @patch.object(destination, "request")

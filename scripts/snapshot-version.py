@@ -5,7 +5,7 @@ import re
 import subprocess
 
 
-# Keep this grammar aligned with Validate Tag Format in .github/workflows/release.yml.
+# Keep this grammar aligned with the tag check in .github/workflows/release-candidate.yml and release.yml.
 RELEASE_TAG = re.compile(r"v[0-9]+\.[0-9]+\.[0-9]+(?:-(?:alpha|beta|rc)\.[0-9]+)?\Z")
 
 

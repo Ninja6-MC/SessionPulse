@@ -1,11 +1,13 @@
 <#
 .SYNOPSIS
-    Cuts a release tag and pushes it. PowerShell wrapper around scripts/release.sh.
+    Cuts a release tag, pushes it and dispatches the publisher. PowerShell wrapper
+    around scripts/release.sh.
 
 .DESCRIPTION
-    The checks live in release.sh. This wrapper only locates Git Bash and hands over, so
-    there is one implementation of the release guard rather than two that can drift
-    apart. See release.sh for what is checked and why.
+    The checks, the attestation prompts and the publisher dispatch live in release.sh.
+    This wrapper only locates Git Bash and hands over, so there is one implementation of
+    the release guard rather than two that can drift apart. See release.sh for what is
+    checked and why.
 
     Git installs are searched before PATH because PATH may resolve to
     C:\Windows\System32\bash.exe, which launches WSL: a different filesystem view
@@ -16,6 +18,9 @@
 
 .EXAMPLE
     .\scripts\release.ps1 1.0.0
+
+.EXAMPLE
+    .\scripts\release.ps1 0.2.0-beta.2 --resume hangar --candidate-run 42706821075
 #>
 [CmdletBinding()]
 param(
