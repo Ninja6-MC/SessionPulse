@@ -100,6 +100,8 @@ class AttestationGuardTest(unittest.TestCase):
                 {"id": 80, "head_branch": TAG, "status": "completed", "updated_at": "2026-11-10T09:00:00Z"},
                 {"id": 70, "head_branch": "v1.2.3-beta.0", "status": "in_progress", "updated_at": created}]
         publisher.check_concurrent(runs, "90", created, TAG)
+        waiting = {"id": 92, "head_branch": TAG, "status": "pending", "created_at": "2026-11-10T10:01:00Z"}
+        publisher.check_concurrent(runs + [waiting], "90", created, TAG)
         for other in ({"id": 91, "head_branch": TAG, "status": "queued", "updated_at": created},
                       {"id": 89, "head_branch": TAG, "status": "in_progress", "updated_at": created},
                       {"id": 88, "head_branch": TAG, "status": "completed", "updated_at": "2026-11-10T10:00:01Z"}):

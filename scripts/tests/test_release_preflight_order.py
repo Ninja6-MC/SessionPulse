@@ -146,6 +146,17 @@ class PublishJobTest(unittest.TestCase):
             self.assertIn(f"if: {state}.outputs.state == 'absent'", step)
             self.assertIn(f"if: {state}.outputs.state == 'absent'", steps(job)[step_index(job, write)])
 
+    def test_plan_refuses_a_reused_attestation_before_approval(self):
+        job = jobs(PUBLISHER)["plan"]
+        step = steps(job)[step_index(job, "Refuse attestations beside another publisher run")]
+        self.assertIn("--check-attempt", step)
+
+    def test_hangar_upload_takes_its_attestation_from_this_dispatch(self):
+        job = jobs(PUBLISHER)["publish-hangar"]
+        step = steps(job)[step_index(job, "Publish Hangar if absent")]
+        self.assertIn("CONFIRMED: ${{ inputs.hangar_absence_confirmed }}", step)
+        self.assertNotIn("--absence-confirmed --require-absent", step)
+
     def test_each_registry_job_uploads_only_its_own_destination(self):
         self.assertNotIn("mc-publish", jobs(PUBLISHER)["publish-github"] + jobs(PUBLISHER)["publish-hangar"])
         self.assertNotIn("publishPluginPublicationToHangar -P", jobs(PUBLISHER)["publish-github"] + jobs(PUBLISHER)["publish-modrinth"])

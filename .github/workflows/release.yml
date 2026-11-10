@@ -132,7 +132,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           ATTESTED: ${{ inputs.modrinth_absence_confirmed || inputs.hangar_absence_confirmed }}
-        run: python3 scripts/release-publisher.py guard --repo "$GITHUB_REPOSITORY" --tag "$TAG" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" --attested "$ATTESTED"
+        run: python3 scripts/release-publisher.py guard --repo "$GITHUB_REPOSITORY" --tag "$TAG" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" --attested "$ATTESTED" --check-attempt
       - name: Require an attestation for each destination not publicly complete
         env:
           GH_TOKEN: ${{ github.token }}
@@ -451,9 +451,12 @@ jobs:
         if: steps.hangar.outputs.state == 'absent'
         env:
           HANGAR_API_TOKEN: ${{ secrets.HANGAR_API_TOKEN }}
+          CONFIRMED: ${{ inputs.hangar_absence_confirmed }}
         run: |
           set -euo pipefail
-          python3 scripts/release-destination.py hangar --project "$HANGAR_PROJECT" --directory candidate --evidence evidence.json --tag "$TAG" --sha "$SHA" --run-id "$CANDIDATE_RUN" --attempt "$CANDIDATE_ATTEMPT" --absence-confirmed --require-absent
+          args=()
+          if [ "$CONFIRMED" = true ]; then args+=(--absence-confirmed); fi
+          python3 scripts/release-destination.py hangar --project "$HANGAR_PROJECT" --directory candidate --evidence evidence.json --tag "$TAG" --sha "$SHA" --run-id "$CANDIDATE_RUN" --attempt "$CANDIDATE_ATTEMPT" "${args[@]}" --require-absent
           mkdir -p build
           cp candidate/release-notes.md build/release-notes.md
           BEFORE="$(sha256sum "candidate/SessionPulse-$VERSION.jar")"

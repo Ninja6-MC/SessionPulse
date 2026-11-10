@@ -170,8 +170,13 @@ class ReleaseDestinationTest(unittest.TestCase):
     @patch.object(destination.subprocess, "run")
     def test_github_absence_and_partial_asset_upload(self, run):
         manifest = {**MANIFEST, "tag": "v1.2.3-rc.1"}
-        run.return_value = subprocess.CompletedProcess([], 1, "", "HTTP 404")
+        missing = subprocess.CompletedProcess([], 1, "", "HTTP 404")
+        run.side_effect = [missing, subprocess.CompletedProcess([], 0, json.dumps([{"tag_name": "v1.2.2"}]), "")]
         self.assertEqual(destination.github(self.directory, manifest, "Ninja6-MC/SessionPulse"), "absent")
+        run.side_effect = [missing, subprocess.CompletedProcess([], 0, json.dumps([{"tag_name": manifest["tag"], "draft": True}]), "")]
+        with self.assertRaisesRegex(ValueError, "draft GitHub release"):
+            destination.github(self.directory, manifest, "Ninja6-MC/SessionPulse")
+        run.side_effect = None
         (self.directory / "release-body.md").write_text("Notes")
         release = {"tag_name": manifest["tag"], "prerelease": True, "draft": False,
                    "body": "Notes", "assets": []}

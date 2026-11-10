@@ -235,7 +235,11 @@ checked directly and needs no attestation.
 | `nonce` | Free text added to the run name, so `scripts/release.sh` can find the run it started. |
 
 Publisher runs for one tag share a concurrency group keyed on the tag ref; a second
-dispatch waits for the first to finish.
+dispatch waits for the first to finish. Do not dispatch again while a publisher run for
+the tag is still waiting or running. The waiting dispatch cannot use a true attestation
+once the earlier run has finished, because that run may have written a version the
+attestation did not see; let the first run finish, re-inspect the owner inventory, then
+dispatch.
 
 The `plan` job needs no approval and holds no publishing secret. Its failures appear
 before anyone is asked to approve. It:
@@ -247,9 +251,10 @@ before anyone is asked to approve. It:
    the newest candidate attempt in that run, with evidence from the same attempt. An
    expired candidate or evidence artifact stops the publisher (see *Expired candidates*).
 3. Downloads the candidate and evidence from that run and verifies them.
-4. Refuses a true attestation when another publisher run for the tag is in progress or
-   finished after this run was created, since that run may have written a version the
-   attestation did not see.
+4. Refuses a true attestation on any attempt but the first, and when an earlier
+   publisher run for the tag is still in progress or any run finished after this run was
+   created, since that run may have written a version the attestation did not see. A
+   later dispatch still waiting behind this run is ignored here; it refuses itself.
 5. Checks each selected destination with anonymous lookups: the GitHub release, the
    Modrinth project approval and version list, and the Hangar project, channel and
    version. A registry not shown complete needs its attestation; without one the run

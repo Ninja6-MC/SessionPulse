@@ -84,6 +84,10 @@ def check_concurrent(runs, current_id, created_at, tag):
         if str(run.get("id")) == str(current_id) or run.get("head_branch") != tag:
             continue
         if run.get("status") != "completed":
+            # The concurrency group holds a later dispatch until this run ends,
+            # so it cannot have written anything yet; it refuses itself instead.
+            if (run.get("created_at") or "") > created_at:
+                continue
             raise ValueError(f"Publisher run {run.get('id')} for {tag} is {run.get('status')}; "
                              "a true absence attestation cannot be used beside it")
         if (run.get("updated_at") or "") > created_at:

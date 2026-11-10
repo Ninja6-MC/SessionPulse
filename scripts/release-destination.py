@@ -61,7 +61,8 @@ def attested_absence(destination, confirmed):
     """An omitted registry result is not proof of absence; only this dispatch's attestation is."""
     if not confirmed:
         raise ValueError(f"{destination} lookup does not show this version, which does not prove it is absent; "
-                         f"inspect the owner inventory and dispatch with {destination}_absence_confirmed=true")
+                         f"inspect the owner inventory and dispatch with {destination}_absence_confirmed=true only if it is absent there. "
+                         "A draft, unlisted, scheduled or deleted version for this number must be reconciled by hand instead")
     return "absent"
 
 
@@ -79,6 +80,11 @@ def github(directory, manifest, repo):
     process = subprocess.run(["gh", "api", f"repos/{repo}/releases/tags/{tag}"], capture_output=True, text=True)
     if process.returncode:
         if "HTTP 404" in process.stderr:
+            drafts = subprocess.run(["gh", "api", f"repos/{repo}/releases?per_page=100"], capture_output=True, text=True)
+            if drafts.returncode:
+                raise ValueError(f"GitHub release list query failed: {drafts.stderr.strip()}")
+            if any(item.get("tag_name") == tag for item in json.loads(drafts.stdout)):
+                raise ValueError(f"A draft GitHub release already exists for {tag}; reconcile it by hand")
             return "absent"
         raise ValueError(f"GitHub release query failed: {process.stderr.strip()}")
     release = json.loads(process.stdout)
