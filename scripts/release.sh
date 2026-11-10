@@ -12,7 +12,7 @@
 #
 #   scripts/release.sh 1.0.0
 #   scripts/release.sh 0.2.0-beta.2 --dry-run
-#   scripts/release.sh 0.2.0-beta.2 --resume hangar --candidate-run 42706821075
+#   scripts/release.sh 0.2.0-beta.2 --resume hangar --candidate-run <candidate-run-id>
 #
 # Pass the version without the leading "v"; the tag gets it. --resume skips tagging and
 # dispatches the publisher again for an existing tag, for the comma-separated destinations

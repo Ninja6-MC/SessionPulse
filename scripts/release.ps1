@@ -20,7 +20,7 @@
     .\scripts\release.ps1 1.0.0
 
 .EXAMPLE
-    .\scripts\release.ps1 0.2.0-beta.2 --resume hangar --candidate-run 42706821075
+    .\scripts\release.ps1 0.2.0-beta.2 --resume hangar --candidate-run <candidate-run-id>
 #>
 [CmdletBinding()]
 param(
