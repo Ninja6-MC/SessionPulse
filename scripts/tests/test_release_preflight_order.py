@@ -9,6 +9,7 @@ PUBLISHER = (WORKFLOWS / "release.yml").read_text()
 CANDIDATE = (WORKFLOWS / "release-candidate.yml").read_text()
 PREFLIGHT = (ROOT / "scripts" / "release-preflight.sh").read_text()
 PUBLISH_JOBS = ("publish-github", "publish-modrinth", "publish-hangar")
+DESCRIPTION_JOBS = ("check-modrinth-description", "confirm-modrinth-description")
 TAG_GUARD = "github.ref == format('refs/tags/{0}', inputs.tag)"
 
 
@@ -53,7 +54,7 @@ class PublisherShapeTest(unittest.TestCase):
 
     def test_every_job_runs_only_on_the_tag_it_names(self):
         graph = jobs(PUBLISHER)
-        self.assertEqual(set(graph), {"plan", *PUBLISH_JOBS})
+        self.assertEqual(set(graph), {"plan", *PUBLISH_JOBS, *DESCRIPTION_JOBS})
         for name, job in graph.items():
             self.assertIsNotNone(re.search(r"^    if: " + re.escape(TAG_GUARD) + r"( &&|\n)", job, re.M), name)
 

@@ -110,6 +110,18 @@ def is_newest(version, published):
     return all(key <= own for key in map(version_key, published) if key is not None)
 
 
+def shared_state_owner(published):
+    """The version that owns a destination's shared state (N6-REL-05).
+
+    The highest stable version published there, or the highest pre-release while it has
+    no stable version. `published` holds the version numbers public on that destination;
+    anything that is not a release version is ignored. Returns None when none qualifies.
+    """
+    keyed = [(key, version) for version in published if (key := version_key(version)) is not None]
+    stable = [item for item in keyed if item[0][3] == RANK[None]]
+    return max(stable or keyed, default=(None, None))[1]
+
+
 def gh_json(path):
     process = subprocess.run(["gh", "api", path], capture_output=True, text=True)
     if process.returncode:

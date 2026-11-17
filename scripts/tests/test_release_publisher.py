@@ -126,6 +126,24 @@ class AttestationGuardTest(unittest.TestCase):
         self.assertIn("workflows/release.yml/runs?branch=v1.2.3-beta.1", gh_json.call_args.args[0])
 
 
+class SharedStateOwnerTest(unittest.TestCase):
+    def test_highest_stable_owns_even_beside_a_newer_pre_release(self):
+        self.assertEqual(publisher.shared_state_owner(["0.2.0", "0.3.0-beta.1", "0.1.0"]), "0.2.0")
+
+    def test_stable_hotfix_below_a_newer_stable_does_not_own(self):
+        self.assertEqual(publisher.shared_state_owner(["1.1.0", "1.0.1"]), "1.1.0")
+
+    def test_stable_hotfix_after_a_newer_pre_release_owns(self):
+        self.assertEqual(publisher.shared_state_owner(["1.0.1", "1.1.0-beta.1"]), "1.0.1")
+
+    def test_highest_pre_release_owns_while_there_is_no_stable_version(self):
+        self.assertEqual(publisher.shared_state_owner(["1.0.0-alpha.3", "1.0.0-rc.1", "1.0.0-beta.9"]), "1.0.0-rc.1")
+
+    def test_nothing_public_or_not_a_release_version_has_no_owner(self):
+        self.assertIsNone(publisher.shared_state_owner([]))
+        self.assertIsNone(publisher.shared_state_owner(["latest", "1.0"]))
+
+
 class HangarPageSyncTest(unittest.TestCase):
     def test_orders_prereleases_below_their_release(self):
         ordered = ["0.9.0", "1.0.0-alpha.2", "1.0.0-alpha.10", "1.0.0-beta.1", "1.0.0-rc.1", "1.0.0", "1.0.1-beta.1"]
