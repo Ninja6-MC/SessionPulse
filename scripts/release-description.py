@@ -106,6 +106,8 @@ def check_environment(repository):
                      if rule.get("type") == "required_reviewers" for item in rule.get("reviewers", [])]
         if not any(item.get("type") in ("User", "Team") and (item.get("reviewer") or {}).get("id") for item in reviewers):
             raise ValueError(f"{ENVIRONMENT} has no required reviewer; configure it before a paste is requested")
+        if environment.get("can_admins_bypass") is not False:
+            raise ValueError(f"{ENVIRONMENT} must not allow administrators to bypass its protection rules")
         policy = environment.get("deployment_branch_policy") or {}
         if policy.get("custom_branch_policies") is not True or policy.get("protected_branches") is not False:
             raise ValueError(f"{ENVIRONMENT} must restrict deployments to v* tags with custom policies")

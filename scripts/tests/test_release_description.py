@@ -219,7 +219,8 @@ class SourceTest(unittest.TestCase):
 
 class EnvironmentTest(unittest.TestCase):
     GOOD = {"protection_rules": [{"type": "required_reviewers", "reviewers": [{"type": "User", "reviewer": {"id": 7}}]}],
-            "deployment_branch_policy": {"custom_branch_policies": True, "protected_branches": False}}
+            "deployment_branch_policy": {"custom_branch_policies": True, "protected_branches": False},
+            "can_admins_bypass": False}
 
     def check(self, environment, policies=None):
         responses = [environment, {"branch_policies": policies if policies is not None else [{"type": "tag", "name": "v*"}]}]
@@ -232,6 +233,9 @@ class EnvironmentTest(unittest.TestCase):
     def test_refuses_to_request_a_paste_the_gate_would_not_hold(self):
         for environment, policies in (({**self.GOOD, "protection_rules": []}, None),
                                       ({**self.GOOD, "deployment_branch_policy": None}, None),
+                                      ({**self.GOOD, "can_admins_bypass": True}, None),
+                                      ({key: value for key, value in self.GOOD.items() if key != "can_admins_bypass"}, None),
+                                      ({**self.GOOD, "can_admins_bypass": None}, None),
                                       (self.GOOD, []),
                                       (self.GOOD, [{"type": "branch", "name": "main"}]),
                                       (self.GOOD, [{"type": "tag", "name": "v*"}, {"type": "tag", "name": "*"}])):

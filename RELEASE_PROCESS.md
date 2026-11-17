@@ -360,7 +360,8 @@ which would let the job run before anyone has pasted, so set it up first:
 * No secrets and no variables. The job reads only public endpoints.
 
 The check job reads these settings and refuses to ask for a paste when the environment is
-missing, has no required reviewer, or allows anything but `v*` tags. Never approve a
+missing, has no required reviewer, allows administrator bypass (or does not report the
+setting), or allows anything but `v*` tags. Never approve a
 deployment from automation.
 
 ### Repository Variables
