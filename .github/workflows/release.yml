@@ -475,3 +475,48 @@ jobs:
         env:
           HANGAR_API_TOKEN: ${{ secrets.HANGAR_API_TOKEN }}
         run: ./gradlew syncPluginPublicationMainResourcePagePageToHangar -PhangarProject="$HANGAR_PROJECT" --no-daemon
+
+  # The two jobs below are N6-REL-06. They write nothing and hold no secret, and neither
+  # declares a concurrency group of its own, so a pending approval holds nothing beyond
+  # this run. The checkout fetches every tag: the confirm job may need another tag's file.
+  check-modrinth-description:
+    name: Check the public Modrinth description
+    needs: [plan, publish-modrinth]
+    if: github.ref == format('refs/tags/{0}', inputs.tag) && always() && !cancelled() && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      paste_needed: ${{ steps.description.outputs.paste_needed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Compare the public body and request a paste if needed
+        id: description
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MODRINTH_PROJECT: ${{ vars.MODRINTH_PROJECT || 'sessionpulse' }}
+        run: python3 scripts/release-description.py check --repository "$GITHUB_REPOSITORY" --tag "$TAG" --project "$MODRINTH_PROJECT" --output "$GITHUB_OUTPUT"
+
+  confirm-modrinth-description:
+    name: Confirm the pasted Modrinth description
+    needs: [check-modrinth-description]
+    if: github.ref == format('refs/tags/{0}', inputs.tag) && needs.check-modrinth-description.outputs.paste_needed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: modrinth-description
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Recheck the owner and read back the pasted description
+        env:
+          MODRINTH_PROJECT: ${{ vars.MODRINTH_PROJECT || 'sessionpulse' }}
+        run: python3 scripts/release-description.py confirm --repository "$GITHUB_REPOSITORY" --tag "$TAG" --project "$MODRINTH_PROJECT"

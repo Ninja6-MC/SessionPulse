@@ -293,6 +293,10 @@ alone, so they wait at the gate together and one approval releases the run. Each
 A failure while uploading to one destination, such as a registry outage, does not stop
 the others.
 
+`check-modrinth-description` and `confirm-modrinth-description` follow the Modrinth job
+and are described under [Store Descriptions](#store-descriptions). They write nothing,
+hold no secret, and do not use the `release` environment.
+
 **Requires Java 21.** The plugin is built for Java 21 and declares it on Modrinth; every
 server must run on Java 21 or newer to load it. Supported Paper and Spigot 26.3
 servers require Java 25; the plugin compilation target stays at Java 21 for older
@@ -343,6 +347,21 @@ retried by a new dispatch once the prerequisite is fixed.
 | `MODRINTH_TOKEN` holds `VERSION_CREATE`, and its owner may create versions on the project | Modrinth | A token's scopes are visible only on Modrinth, which has no read-only introspection endpoint; a write probe is not used |
 | Modrinth accepts the version's loaders, game versions and dependency | Modrinth | Validated only when the version is created |
 | Hangar accepts the uploaded file, platform versions and dependency | Hangar | The task-graph dry run checks the tasks, not the server's validation |
+
+### Modrinth Description Environment
+
+The confirm job waits on its own environment, `modrinth-description`, which the
+maintainer must create before the first release that can need a paste (the rule applies
+from 2027-01-31). GitHub creates an unknown environment on first use with no protection,
+which would let the job run before anyone has pasted, so set it up first:
+
+* Required reviewer: the maintainer. Do not allow administrator bypass.
+* Deployment branches and tags: selected, with the single tag policy `v*`.
+* No secrets and no variables. The job reads only public endpoints.
+
+The check job reads these settings and refuses to ask for a paste when the environment is
+missing, has no required reviewer, or allows anything but `v*` tags. Never approve a
+deployment from automation.
 
 ### Repository Variables
 
@@ -443,6 +462,34 @@ the README, run
   `docs/store-description.md` into the project's description editor on Modrinth.
   Editing a description does **not** re-enter the review queue: if the project was
   rejected, fix the description and then use *Resubmit for review*, or it stays rejected.
+
+  The publisher confirms the paste. It writes nothing to Modrinth: `MODRINTH_TOKEN` cannot
+  edit the project body, and a token that could would also be able to change everything
+  else on the project.
+
+  1. `check-modrinth-description` has no secrets and no environment. It lists the
+     versions listed publicly on Modrinth and takes the owner of the project page: the
+     highest stable version, or the highest pre-release while there is no stable version.
+     A tag that is not the owner stops here and says so. For the owner it compares the
+     public project body with `docs/store-description.md` at the tag, without its
+     generated comment, ignoring line endings and trailing whitespace only. A match ends
+     the step and nobody is asked.
+  2. When they differ, the run summary names the file and the tag to paste from and links
+     to it, and `confirm-modrinth-description` waits on the `modrinth-description`
+     environment (see [Modrinth Description Environment](#modrinth-description-environment)).
+     Paste the file into the description editor, then approve.
+  3. After approval the job checks the owner again, because the paste is the write and
+     the owner can change while the job waits. It then compares the body with the file at
+     the tag that owns the page now. If that is another tag, it says this tag was
+     superseded and names the owner. It fails, with a short diff in the run summary,
+     unless the body matches that file. To recover, paste the file it names and re-run
+     the job.
+
+  Neither job declares a concurrency group of its own. They sit outside the shared-state
+  group that #127 introduces, because they write nothing and the check after approval
+  makes the order of approvals irrelevant. Until then the run's existing group, keyed on
+  the tag ref, still applies to the whole run, so a pending approval holds a re-dispatch
+  of the same tag and no other tag.
 * **Hangar** is written by the release workflow. After the version upload, the Hangar
   job runs `syncPluginPublicationMainResourcePagePageToHangar` when the version is the
   newest public version on its Hangar channel, which sends
