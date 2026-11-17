@@ -20,8 +20,9 @@ betas for public testing; `1.0.0` is the first stable release. Alphas are still 
 each one is a GitHub pre-release, is published to Hangar's *Alpha* channel, which is
 marked unstable and hidden by default, and reaches Modrinth's *alpha* channel once the
 Modrinth project is approved. Do not push an unsuffixed tag below `v1.0.0`: the release
-workflows publish every unsuffixed tag as a stable release, as *Latest* on GitHub and on the
-*release* channel of Modrinth and Hangar.
+workflows publish every unsuffixed tag as a stable release on GitHub and on the *release*
+channel of Modrinth and Hangar, and the first one takes GitHub's *Latest* marker and the
+Hangar page from every pre-release (see [Shared state](#shared-state)).
 
 **Do not tag a release candidate below `v1.0.0`.** An `-rc.N` tag promises that the same
 bytes become the unsuffixed release, and below `v1.0.0` that release can never be cut. Use
@@ -68,7 +69,7 @@ there is no separate release branch.
 | :--- | :--- | :--- | :--- | :--- |
 | **Alpha** | `vX.Y.Z-alpha.N` | `main` | Experimental | GitHub Releases (*Pre-release*), Modrinth (*alpha*), Paper Hangar (*Alpha*) |
 | **Beta / RC** | `vX.Y.Z-beta.N`, `vX.Y.Z-rc.N` (X >= 1) | `main` | Feature-Complete | GitHub Releases (*Pre-release*), Modrinth (*beta*), Paper Hangar (*Beta*) |
-| **Market (GA)** | `vX.Y.Z` | `main` | Production Stable | GitHub Releases (*Latest*), Modrinth (*release*), Paper Hangar (*Release*), SpigotMC (*manual*) |
+| **Market (GA)** | `vX.Y.Z` | `main` | Production Stable | GitHub Releases (*Latest* when highest stable), Modrinth (*release*), Paper Hangar (*Release*), SpigotMC (*manual*) |
 
 Notes on the table:
 
@@ -134,7 +135,8 @@ Without it, the script asks for the tag to be typed back, creates an annotated t
 pushes that one tag by name. It then waits for the *Release Candidate* run, prints the
 owner-inventory checklist, asks whether each registry's version is absent (type `absent`
 or `present`; there is no default) and dispatches *Publish Release* on the tag with those
-answers. Approve the `release` environment in the browser once its `plan` job has passed.
+answers. Approve the `release` environment in the browser once its `plan` job has passed,
+and again for `shared-state` when the plan summary says this tag can own shared state.
 Without `gh`, the script stops after the push; dispatch later with `--resume` (see
 *Partial Publication and Retry*). The extractor and tag grammar are copies of the ones in
 `release-candidate.yml`; `scripts/tests/test_release_script.py` fails if they drift apart.
@@ -235,11 +237,12 @@ checked directly and needs no attestation.
 | `nonce` | Free text added to the run name, so `scripts/release.sh` can find the run it started. |
 
 Publisher runs for one tag share a concurrency group keyed on the tag ref; a second
-dispatch waits for the first to finish. Do not dispatch again while a publisher run for
-the tag is still waiting or running. The waiting dispatch cannot use a true attestation
-once the earlier run has finished, because that run may have written a version the
-attestation did not see; let the first run finish, re-inspect the owner inventory, then
-dispatch.
+dispatch waits for the first to finish. The `shared-state` job is also in a second,
+repository-wide group (see [Shared state](#shared-state)). Do not dispatch again while a
+publisher run for the tag is still waiting or running. The waiting dispatch cannot use a
+true attestation once the earlier run has finished, because that run may have written a
+version the attestation did not see; let the first run finish, re-inspect the owner
+inventory, then dispatch.
 
 The `plan` job needs no approval and holds no publishing secret. Its failures appear
 before anyone is asked to approve. It:
@@ -259,7 +262,11 @@ before anyone is asked to approve. It:
    Modrinth project approval and version list, and the Hangar project, channel and
    version. A registry not shown complete needs its attestation; without one the run
    stops here.
-6. Dry-runs the Hangar task graph when Hangar is selected.
+6. Predicts, from public inventories, whether this tag can own the GitHub latest marker or
+   the Hangar page once its uploads land, and says so in the summary. A tag that cannot
+   own either skips `shared-state` and is not asked for a second approval. The prediction
+   can only skip that job; it never authorizes a write.
+7. Dry-runs the Hangar task graph when Hangar is selected.
 
 `publish-github`, `publish-modrinth` and `publish-hangar` then each publish one
 destination. All three use the protected `release` environment and depend on `plan`
@@ -280,18 +287,60 @@ alone, so they wait at the gate together and one approval releases the run. Each
    on its first attempt, and checks again for an overlapping publisher run. Re-running
    a job reuses the outputs of `plan`, so this check is in the job that uploads.
 4. Uploads the unchanged jar and verifies the public consumer download. Pre-releases
-   retain their tier; only stable tags become GitHub Latest. Both registries declare
-   EssentialsX as an optional, unpinned dependency (`dependencies` on the `mc-publish`
-   step; an external-URL dependency pointing at its Modrinth page in `hangarPublish`,
-   since EssentialsX is not on Hangar). Keep the two in step with `softdepend` in
-   `plugin.yml`.
-5. In the Hangar job only, syncs the Hangar resource page from
-   `docs/store-description.md` when this version is the newest public version on its
-   Hangar channel. Otherwise it logs that the sync was skipped, so an older version never
-   overwrites a newer version's page. See [Store Descriptions](#store-descriptions).
-
+   retain their tier. Every GitHub release is created with `--latest=false`; the marker is
+   set by `shared-state`. Both registries declare EssentialsX as an optional, unpinned
+   dependency (`dependencies` on the `mc-publish` step; an external-URL dependency
+   pointing at its Modrinth page in `hangarPublish`, since EssentialsX is not on Hangar).
+   Keep the two in step with `softdepend` in `plugin.yml`.
 A failure while uploading to one destination, such as a registry outage, does not stop
-the others.
+the others. No publish job writes shared state.
+
+#### Shared state
+
+The GitHub *Latest* marker and the Hangar project page are shared by every tag, so they
+follow `N6-REL-05`: each belongs to the tag that owns it on that destination, and only
+that tag writes it.
+
+* **Hangar page:** the highest stable version public on Hangar, on any channel, or the
+  highest pre-release while Hangar has no public stable version.
+* **GitHub latest:** the highest published stable GitHub release. GitHub never marks a
+  pre-release as latest, so the marker stays unset until the first stable release.
+
+Versions are ordered by `MAJOR.MINOR.PATCH`, then alpha, beta, rc and stable, then the
+pre-release number. A pre-release therefore never replaces a stable version's page, a
+stable hotfix below a newer stable version (`1.0.1` after `1.1.0`) writes neither, and a
+stable hotfix published after a newer pre-release (`1.0.1` after `1.1.0-beta.1`) owns
+both. Each destination is judged by its own inventory; a version missing from one does
+not make another destination the authority.
+
+`shared-state` runs after `publish-github` and `publish-hangar`, for each of them that
+succeeded and that `plan` predicted this tag can own. It uses the `release` environment,
+so it asks for a **second approval**, after the publish jobs and separate from theirs.
+Its job-level concurrency group, `release-shared-state` with `cancel-in-progress: false`,
+is repository-wide and does not contain the tag, so two tags published at the same time
+cannot both decide they own the state. A pending approval holds that group: approve or
+reject it promptly. The job:
+
+1. Downloads the same candidate and evidence and runs the same credential preflight as
+   the publish jobs.
+2. For GitHub, verifies the release matches the candidate, then reads the published
+   stable releases again and, only if this tag owns the marker, runs
+   `gh release edit <tag> --latest`.
+3. For Hangar, verifies the version matches the candidate, then reads the public Hangar
+   versions again and, only if this tag owns the page, runs
+   `syncPluginPublicationMainResourcePagePageToHangar` (see
+   [Store Descriptions](#store-descriptions)).
+
+Ownership is read immediately before each write, never taken from `plan`. A tag that does
+not own the state skips the write and names the owner in the log and the run summary. A
+failed GitHub step does not stop an eligible Hangar sync; the job fails after it.
+
+GitHub keeps one running and one pending job per concurrency group, so a third tag queued
+behind a pending `shared-state` job cancels that pending job. A cancelled pending job has
+written nothing, and every surviving job rechecks ownership, so a non-owner cannot take
+the state; the cancelled tag's state may simply stay stale. Recover as in the retry table.
+Rejecting the approval also leaves both unwritten: a stable release then stays unmarked
+as latest until recovered.
 
 `check-modrinth-description` and `confirm-modrinth-description` follow the Modrinth job
 and are described under [Store Descriptions](#store-descriptions). They write nothing,
@@ -306,14 +355,14 @@ supported servers. Folia 26.3 is not declared because no server build is availab
 
 The `release` environment requires maintainer approval, accepts `v*` tags only and
 disallows administrator bypass. The candidate workflow and the `plan` job have read
-permission and receive no publishing credentials. Only the three publish jobs use the
-environment and its secrets, and only `publish-github` has `contents: write`. Never
-approve a deployment from automation.
+permission and receive no publishing credentials. Only the three publish jobs and
+`shared-state` use the environment and its secrets, and only `publish-github` and
+`shared-state` have `contents: write`. Never approve a deployment from automation.
 
 | Environment secret | Used by | Required scope |
 | :--- | :--- | :--- |
 | `MODRINTH_TOKEN` | Modrinth lookup and upload | `PROJECT_READ` and `VERSION_READ` for authenticated lookup, plus `VERSION_CREATE` for upload; Modrinth enforces the token owner's effective project permissions when uploading |
-| `HANGAR_API_TOKEN` | Hangar lookup, version upload and page sync | Key covering SessionPulse, owned by a project member, with `create_version`, `edit_page` |
+| `HANGAR_API_TOKEN` | Hangar lookup, version upload and the page sync in `shared-state` | Key covering SessionPulse, owned by a project member, with `create_version`, `edit_page` |
 
 Before the first public write, the anonymous Modrinth project response must have
 `status: approved`, as defined by the
@@ -323,9 +372,9 @@ even when `requested_status` is `approved`. Resolve project review before retryi
 do not change registry visibility or submit approval from the publisher.
 
 A Hangar API key holding only `create_version` still uploads the version, but Hangar
-rejects the page sync that follows. That fails the job whenever the page text changed;
-when it did not, the only sign is an `Error using endpoint` line in the step log. The
-preflight therefore requires both permission bits. The version lookup endpoint used here
+rejects the page sync that follows. That fails `shared-state` whenever the page text
+changed; when it did not, the only sign is an `Error using endpoint` line in the step
+log. The preflight therefore requires both permission bits. The version lookup endpoint used here
 checks project access and visibility; it does not require a separate `view_public_info`
 key permission.
 
@@ -389,7 +438,7 @@ version. Inspect the published files against `manifest.json`, then decide how to
 later attempt of the same run, and every publish job refuses a true attestation on any
 attempt but the first. Re-running a failed job is useful only when its destination is
 already complete, for example when Modrinth visibility outlasted the verification
-retries or the Hangar page sync failed after the upload. Everything else is a new
+retries, or `shared-state` failed, was rejected or was cancelled. Everything else is a new
 dispatch that selects only the destinations still missing, with a fresh owner-inventory
 check:
 
@@ -408,7 +457,7 @@ asks for each selected registry's attestation again.
 | `publish-modrinth`, before or during the upload | Modrinth version may be missing or a draft | Re-inspect the Modrinth owner inventory (a failed create can leave a draft), fix the cause, then `--resume modrinth` |
 | `publish-modrinth`, verification after upload | Version uploaded, not yet visible | Re-run that job once the version is public, or `--resume modrinth` and answer `present` |
 | `publish-hangar`, before or during the upload | Hangar version may be missing or hidden | Re-inspect the Hangar owner inventory, fix the cause, then `--resume hangar` |
-| `publish-hangar`, page sync | Version complete | Re-run that job, or `--resume hangar` and answer `present` |
+| `shared-state`, rejected, cancelled or failed | Versions complete; the Hangar page or GitHub latest may be stale | Re-run that job, or `--resume github`, `--resume hangar` or both and answer `present`. Ownership is rechecked, so this is safe for any tag; only the owner writes |
 | Any job, candidate expired | No destination can be published from this candidate | See *Expired candidates* |
 
 Only Modrinth `listed` status and Hangar `public` visibility count as complete,
@@ -486,17 +535,18 @@ the README, run
      unless the body matches that file. To recover, paste the file it names and re-run
      the job.
 
-  Neither job declares a concurrency group of its own. They sit outside the shared-state
-  group that #127 introduces, because they write nothing and the check after approval
-  makes the order of approvals irrelevant. Until then the run's existing group, keyed on
-  the tag ref, still applies to the whole run, so a pending approval holds a re-dispatch
-  of the same tag and no other tag.
-* **Hangar** is written by the release workflow. After the version upload, the Hangar
-  job runs `syncPluginPublicationMainResourcePagePageToHangar` when the version is the
-  newest public version on its Hangar channel, which sends
+  Neither job declares a concurrency group of its own. They sit outside the
+  `release-shared-state` group, because they write nothing and the check after approval
+  makes the order of approvals irrelevant. The run's group, keyed on the tag ref, still
+  applies to the whole run, so a pending paste approval holds a re-dispatch of the same
+  tag and no other tag.
+* **Hangar** is written by the release workflow. After the version upload, the
+  `shared-state` job runs `syncPluginPublicationMainResourcePagePageToHangar` when the tag
+  owns the Hangar page (see [Shared state](#shared-state)), which sends
   `docs/store-description.md` without its generated comment to the resource page
   (`PATCH /api/v1/pages/edit/<project>`, permission `edit_page`). The page therefore
-  follows the newest tagged commit's README, on every tier that publishes to Hangar. The Gradle
+  follows the README at the owning tag: the highest stable version, or the highest
+  pre-release before the first stable one. The Gradle
   plugin only logs a rejected edit, so the task then reads the page back from the public
   `GET /api/v1/pages/main/<project>` endpoint and fails unless it matches exactly; the
   project has to be publicly visible for that read to succeed. Do not edit the page on
