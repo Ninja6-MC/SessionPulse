@@ -74,7 +74,7 @@ jobs:
         uses: gradle/actions/wrapper-validation@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
 
       - name: Set up Java 21
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           java-version: '21'
           distribution: 'temurin'
@@ -278,7 +278,7 @@ jobs:
       # JAVA_HOME and PATH pointing at matrix.java for the server and the bot.
       - name: Set up Java 21 for Gradle
         if: matrix.bot
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           java-version: '21'
           distribution: 'temurin'
@@ -298,7 +298,7 @@ jobs:
       # `java` here is the version the SERVER runs on, not the one the plugin is built
       # with. The jar stays Java 21 bytecode, which a newer runtime accepts.
       - name: Set up Java ${{ matrix.java }}
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           java-version: ${{ matrix.java }}
           distribution: 'temurin'
