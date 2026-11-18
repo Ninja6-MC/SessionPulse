@@ -10,6 +10,9 @@ CANDIDATE = (WORKFLOWS / "release-candidate.yml").read_text()
 PREFLIGHT = (ROOT / "scripts" / "release-preflight.sh").read_text()
 PUBLISH_JOBS = ("publish-github", "publish-modrinth", "publish-hangar")
 DESCRIPTION_JOBS = ("check-modrinth-description", "confirm-modrinth-description")
+SHARED_JOB = "shared-state"
+SHARED_WRITES = {"github": "Recheck ownership and set the GitHub latest marker",
+                 "hangar": "Recheck ownership and sync the Hangar project page"}
 TAG_GUARD = "github.ref == format('refs/tags/{0}', inputs.tag)"
 
 
@@ -54,7 +57,7 @@ class PublisherShapeTest(unittest.TestCase):
 
     def test_every_job_runs_only_on_the_tag_it_names(self):
         graph = jobs(PUBLISHER)
-        self.assertEqual(set(graph), {"plan", *PUBLISH_JOBS, *DESCRIPTION_JOBS})
+        self.assertEqual(set(graph), {"plan", *PUBLISH_JOBS, SHARED_JOB, *DESCRIPTION_JOBS})
         for name, job in graph.items():
             self.assertIsNotNone(re.search(r"^    if: " + re.escape(TAG_GUARD) + r"( &&|\n)", job, re.M), name)
 
@@ -115,7 +118,8 @@ class PlanTest(unittest.TestCase):
 class PublishJobTest(unittest.TestCase):
     first_write = {"publish-github": "Publish GitHub release if absent",
                    "publish-modrinth": "Publish Modrinth if absent",
-                   "publish-hangar": "Publish Hangar if absent"}
+                   "publish-hangar": "Publish Hangar if absent",
+                   SHARED_JOB: SHARED_WRITES["github"]}
 
     def test_every_job_preflights_every_selected_destination_before_writing(self):
         for name, write in self.first_write.items():
@@ -170,14 +174,72 @@ class PublishJobTest(unittest.TestCase):
         self.assertIn("--modrinth-visibility-retries", step)
         self.assertIn("--require-public-project", steps(job)[step_index(job, "Check Modrinth destination")])
 
-    def test_hangar_page_sync_only_for_newest_version_on_channel(self):
-        job = jobs(PUBLISHER)["publish-hangar"]
-        decide = step_index(job, "Check this is the newest public version on its channel")
-        sync = step_index(job, "Sync Hangar resource page")
-        self.assertLess(step_index(job, "Verify Hangar receipt before page sync"), decide)
-        self.assertEqual(decide + 1, sync)
-        self.assertIn("release-publisher.py hangar-sync", steps(job)[decide])
-        self.assertIn("if: steps.page.outputs.sync == 'true'", steps(job)[sync])
+    def test_publish_jobs_write_no_shared_state(self):
+        for name in PUBLISH_JOBS:
+            job = jobs(PUBLISHER)[name]
+            for text in ("syncPluginPublicationMainResourcePagePageToHangar", "shared-write", "gh release edit"):
+                self.assertNotIn(text, job, name)
+        create = steps(jobs(PUBLISHER)["publish-github"])[step_index(jobs(PUBLISHER)["publish-github"],
+                                                                       "Publish GitHub release if absent")]
+        self.assertIn('--notes-file candidate/release-body.md --latest=false)', create)
+        self.assertNotRegex(create, r"--latest(?!=false)")
+
+
+class SharedStateTest(unittest.TestCase):
+    job = jobs(PUBLISHER)[SHARED_JOB]
+
+    def test_one_repository_wide_group_not_keyed_on_the_tag(self):
+        block = self.job.split("\n    concurrency:\n", 1)[1].split("\n    permissions:", 1)[0]
+        self.assertEqual([line.strip() for line in block.strip().splitlines()], ["group: release-shared-state", "cancel-in-progress: false"])
+        self.assertNotIn("${{", block)
+        self.assertEqual(PUBLISHER.count("group: release-shared-state"), 1)
+
+    def test_gated_after_the_writing_publish_jobs_with_its_own_approval(self):
+        self.assertIn("\n    needs: [plan, publish-github, publish-hangar]\n", self.job)
+        self.assertIn("\n    environment: release\n", self.job)
+        self.assertIn("contents: write", self.job)
+        for name, publish in (("github", "publish-github"), ("hangar", "publish-hangar")):
+            condition = f"needs.plan.outputs.shared_{name} == 'true' && needs.{publish}.result == 'success'"
+            self.assertIn(condition, self.job.split("\n    runs-on:", 1)[0])
+            self.assertIn(f"SHARED_{name.upper()}: ${{{{ {condition} }}}}", self.job)
+        self.assertIn("!cancelled() && needs.plan.result == 'success'", self.job)
+
+    def test_each_write_verifies_the_destination_then_rechecks_ownership_last(self):
+        for name, title in SHARED_WRITES.items():
+            step = steps(self.job)[step_index(self.job, title)]
+            self.assertIn(f"if: env.SHARED_{name.upper()} == 'true'", step)
+            lines = [line.strip() for line in step.split("run: |", 1)[1].strip().splitlines()]
+            self.assertTrue(lines[-1].startswith(f"python3 scripts/release-publisher.py shared-write --destination {name} "), name)
+            verify = [line for line in lines if line.startswith(f"python3 scripts/release-destination.py {name} ")]
+            self.assertEqual(len(verify), 1, name)
+            self.assertIn("--require-complete", verify[0])
+            self.assertEqual(lines[0], "set -euo pipefail")
+        self.assertLess(step_index(self.job, "Preflight every selected destination"), step_index(self.job, SHARED_WRITES["github"]))
+        self.assertLess(step_index(self.job, SHARED_WRITES["github"]), step_index(self.job, SHARED_WRITES["hangar"]))
+
+    def test_latest_failure_lets_the_hangar_sync_run_then_fails_the_job(self):
+        latest = steps(self.job)[step_index(self.job, SHARED_WRITES["github"])]
+        self.assertIn("continue-on-error: true", latest)
+        self.assertIn("id: latest", latest)
+        self.assertNotIn("continue-on-error", steps(self.job)[step_index(self.job, SHARED_WRITES["hangar"])])
+        last = steps(self.job)[-1]
+        self.assertIn("name: Fail when the GitHub latest marker was not written", last)
+        self.assertIn("steps.latest.outcome == 'failure'", last)
+        self.assertIn("exit 1", last)
+
+    def test_plan_predicts_ownership_without_secrets(self):
+        plan = jobs(PUBLISHER)["plan"]
+        step = steps(plan)[step_index(plan, "Predict the shared state this tag can own")]
+        self.assertIn("release-publisher.py shared-plan", step)
+        self.assertIn("shared_github: ${{ steps.shared.outputs.shared_github }}", plan)
+        self.assertIn("shared_hangar: ${{ steps.shared.outputs.shared_hangar }}", plan)
+        self.assertLess(step_index(plan, "Require an attestation for each destination not publicly complete"),
+                        step_index(plan, "Predict the shared state this tag can own"))
+
+    def test_description_jobs_stay_outside_the_shared_state_group(self):
+        for name in DESCRIPTION_JOBS:
+            self.assertNotIn("concurrency:", jobs(PUBLISHER)[name], name)
+            self.assertNotIn(SHARED_JOB, jobs(PUBLISHER)[name].split("\n    runs-on:", 1)[0], name)
 
 
 class CandidateWorkflowTest(unittest.TestCase):

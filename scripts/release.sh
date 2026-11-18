@@ -273,6 +273,8 @@ dispatch_publisher() {
     echo "  https://github.com/$REPO/actions/workflows/release.yml"
   fi
   echo "Approve the release environment in the browser once the plan job has passed."
+  echo "If the plan summary asks for a second release approval, it is for the shared-state"
+  echo "job (Hangar page, GitHub latest marker); approve or reject it promptly."
   echo "See RELEASE_PROCESS.md, step 3, for verification and retry rules."
 }
 
@@ -400,7 +402,7 @@ main() {
   case "$version" in
     *-alpha.*) channel="alpha (GitHub pre-release, Modrinth alpha, Hangar Alpha)" ;;
     *-beta.*|*-rc.*) channel="beta (GitHub pre-release, Modrinth beta, Hangar Beta)" ;;
-    *) channel="release (GitHub latest, Modrinth release, Hangar Release)" ;;
+    *) channel="release (GitHub release, latest if highest stable; Modrinth release, Hangar Release)" ;;
   esac
 
   echo

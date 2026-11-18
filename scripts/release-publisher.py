@@ -4,7 +4,8 @@
 destinations  parse the dispatch's comma-separated destination list
 provenance    accept only a successful candidate run for this tag and pin its attempt
 guard         refuse a true absence attestation on a later attempt or beside another publisher run
-hangar-sync   decide whether this version may overwrite the Hangar project page
+shared-plan   predict, before approval, which shared state this tag can own after its uploads
+shared-write  recheck ownership of the Hangar page or the GitHub latest marker, then write it
 """
 
 import argparse
@@ -24,6 +25,10 @@ DESTINATIONS = ("github", "modrinth", "hangar")
 CANDIDATE_WORKFLOW = ".github/workflows/release-candidate.yml"
 PUBLISHER_WORKFLOW = "release.yml"
 RANK = {"alpha": 0, "beta": 1, "rc": 2, None: 3}
+# Shared state per destination (N6-REL-05). GitHub never marks a pre-release as latest,
+# so its marker follows stable versions only and stays unset until the first one.
+SHARED_STATE = {"github": "GitHub latest marker", "hangar": "Hangar project page"}
+STABLE_ONLY = {"github": True, "hangar": False}
 
 
 def parse_destinations(value):
@@ -103,23 +108,29 @@ def version_key(version):
     return major, minor, patch, RANK[match.group(2)], int(match.group(3) or 0)
 
 
-def is_newest(version, published):
-    own = version_key(version)
-    if own is None:
-        raise ValueError(f"Cannot order version {version}")
-    return all(key <= own for key in map(version_key, published) if key is not None)
-
-
-def shared_state_owner(published):
+def shared_state_owner(published, stable_only=False):
     """The version that owns a destination's shared state (N6-REL-05).
 
     The highest stable version published there, or the highest pre-release while it has
     no stable version. `published` holds the version numbers public on that destination;
-    anything that is not a release version is ignored. Returns None when none qualifies.
+    anything that is not a release version is ignored. With `stable_only`, as for the
+    GitHub latest marker, a pre-release never owns. Returns None when none qualifies.
     """
     keyed = [(key, version) for version in published if (key := version_key(version)) is not None]
     stable = [item for item in keyed if item[0][3] == RANK[None]]
-    return max(stable or keyed, default=(None, None))[1]
+    return max(stable if stable or stable_only else keyed, default=(None, None))[1]
+
+
+def owns_after_upload(version, published, stable_only=False):
+    """Whether `version` would own the state once its own upload is public. Plan uses this
+    only to skip a job that cannot write; the write itself rechecks the live inventory."""
+    return shared_state_owner([*published, version], stable_only) == version
+
+
+def tag_version(tag):
+    if not tag.startswith("v") or version_key(tag[1:]) is None:
+        raise ValueError(f"Invalid release tag {tag}")
+    return tag[1:]
 
 
 def gh_json(path):
@@ -162,26 +173,90 @@ def guard(args):
     print(f"No other publisher run for {args.tag} overlaps run {args.run_id}")
 
 
-def hangar_sync(args):
+def public_hangar_versions(project):
+    """Every public Hangar version of the project, on every channel."""
     published, offset = [], 0
     while True:
-        query = urllib.parse.urlencode({"channel": args.channel, "limit": 25, "offset": offset})
+        query = urllib.parse.urlencode({"limit": 25, "offset": offset})
         status, page = destination.request(
-            f"https://hangar.papermc.io/api/v1/projects/{urllib.parse.quote(args.project, safe='')}/versions?{query}")
+            f"https://hangar.papermc.io/api/v1/projects/{urllib.parse.quote(project, safe='')}/versions?{query}")
         if status != 200 or not isinstance(page, dict) or not isinstance(page.get("result"), list):
             raise ValueError("Cannot list public Hangar versions")
-        published += [item.get("name", "") for item in page["result"] if isinstance(item, dict)
-                      and item.get("visibility") == "public"
-                      and (item.get("channel") or {}).get("name") == args.channel]
+        count = (page.get("pagination") or {}).get("count")
+        if not isinstance(count, int) or (not page["result"] and offset < count):
+            raise ValueError("Hangar version pagination is incomplete")
+        published += [item.get("name", "") for item in page["result"]
+                      if isinstance(item, dict) and item.get("visibility") == "public"]
         offset += len(page["result"])
-        if not page["result"] or offset >= (page.get("pagination") or {}).get("count", 0):
-            break
-    newest = is_newest(args.version, published)
-    if newest:
-        print(f"{args.version} is the newest public {args.channel} version; syncing the project page")
-    else:
-        print(f"Skipping Hangar page sync: a newer public {args.channel} version than {args.version} exists")
-    write_outputs({"sync": str(newest).lower()})
+        if offset >= count:
+            return published
+
+
+def public_github_stable(repo):
+    """Tags of the published, non-draft stable GitHub releases, as version numbers."""
+    process = subprocess.run(["gh", "api", "--paginate", f"repos/{repo}/releases?per_page=100", "--jq",
+                              ".[] | select(.draft | not) | select(.prerelease | not) | .tag_name"],
+                             capture_output=True, text=True)
+    if process.returncode:
+        raise ValueError(f"Cannot list GitHub releases: {process.stderr.strip()}")
+    return [tag[1:] for tag in process.stdout.split() if tag.startswith("v")]
+
+
+def shared_inventory(name, args):
+    return public_github_stable(args.repo) if name == "github" else public_hangar_versions(args.project)
+
+
+def summary(text):
+    print(text)
+    path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if path:
+        with open(path, "a", encoding="utf-8") as stream:
+            stream.write(text + "\n\n")
+
+
+def shared_plan(args):
+    version = tag_version(args.tag)
+    outputs = {}
+    for name, label in SHARED_STATE.items():
+        if getattr(args, name) != "true":
+            summary(f"{label}: not selected in this run")
+            outputs[f"shared_{name}"] = "false"
+            continue
+        published = shared_inventory(name, args)
+        owner = shared_state_owner(published, STABLE_ONLY[name])
+        owns = owns_after_upload(version, published, STABLE_ONLY[name])
+        verdict = "can own it after its upload; the write rechecks under the shared-state lock" if owns else "cannot own it"
+        summary(f"{label}: owned now by {'v' + owner if owner else 'no version'}; {args.tag} {verdict}")
+        outputs[f"shared_{name}"] = str(owns).lower()
+    write_outputs(outputs)
+
+
+WRITES = {
+    "github": lambda args: ["gh", "release", "edit", args.tag, "--repo", args.repo, "--latest"],
+    "hangar": lambda args: ["./gradlew", "syncPluginPublicationMainResourcePagePageToHangar",
+                            f"-PhangarProject={args.project}", "--no-daemon"],
+}
+
+
+def shared_write(args):
+    """Runs in the repository-wide shared-state concurrency group. The inventory is read
+    here, immediately before the write, and never taken from plan."""
+    version = tag_version(args.tag)
+    label = SHARED_STATE[args.destination]
+    owner = shared_state_owner(shared_inventory(args.destination, args), STABLE_ONLY[args.destination])
+    if owner != version:
+        summary(f"Skipping the {label}: {args.tag} does not own it; "
+                f"{'v' + owner + ' does' if owner else 'no published version does'}")
+        return
+    summary(f"{args.tag} owns the {label}; writing it")
+    if subprocess.run(WRITES[args.destination](args)).returncode:
+        raise ValueError(f"Writing the {label} for {args.tag} failed")
+    # The Hangar sync task reads the page back itself; the marker is read back here.
+    if args.destination == "github":
+        latest = gh_json(f"repos/{args.repo}/releases/latest").get("tag_name")
+        if latest != args.tag:
+            raise ValueError(f"GitHub latest is {latest} after marking {args.tag}")
+        summary(f"GitHub latest is now {args.tag}")
 
 
 def destinations(args):
@@ -209,11 +284,19 @@ def main():
     attestation.add_argument("--attested", choices=("true", "false"), required=True)
     attestation.add_argument("--check-attempt", action="store_true")
     attestation.set_defaults(handler=guard)
-    page = commands.add_parser("hangar-sync")
-    page.add_argument("--project", required=True)
-    page.add_argument("--version", required=True)
-    page.add_argument("--channel", required=True)
-    page.set_defaults(handler=hangar_sync)
+    forecast = commands.add_parser("shared-plan")
+    forecast.add_argument("--repo", required=True)
+    forecast.add_argument("--tag", required=True)
+    forecast.add_argument("--project", required=True)
+    forecast.add_argument("--github", choices=("true", "false"), required=True)
+    forecast.add_argument("--hangar", choices=("true", "false"), required=True)
+    forecast.set_defaults(handler=shared_plan)
+    write = commands.add_parser("shared-write")
+    write.add_argument("--destination", choices=tuple(SHARED_STATE), required=True)
+    write.add_argument("--repo", required=True)
+    write.add_argument("--tag", required=True)
+    write.add_argument("--project", required=True)
+    write.set_defaults(handler=shared_write)
     args = parser.parse_args()
     args.handler(args)
 
