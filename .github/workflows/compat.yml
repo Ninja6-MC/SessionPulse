@@ -149,13 +149,13 @@ jobs:
       # switches to the server's JDK by its JAVA_HOME_<major>_X64 variable. When the
       # resolved version is 21 the two steps install the same JDK.
       - name: Set up Java ${{ steps.resolve.outputs.java }}
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           java-version: ${{ steps.resolve.outputs.java }}
           distribution: 'temurin'
 
       - name: Set up Java 21 For The Build
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           java-version: '21'
           distribution: 'temurin'
