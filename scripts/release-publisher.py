@@ -251,6 +251,12 @@ def shared_write(args):
     summary(f"{args.tag} owns the {label}; writing it")
     if subprocess.run(WRITES[args.destination](args)).returncode:
         raise ValueError(f"Writing the {label} for {args.tag} failed")
+    # The Hangar sync task reads the page back itself; the marker is read back here.
+    if args.destination == "github":
+        latest = gh_json(f"repos/{args.repo}/releases/latest").get("tag_name")
+        if latest != args.tag:
+            raise ValueError(f"GitHub latest is {latest} after marking {args.tag}")
+        summary(f"GitHub latest is now {args.tag}")
 
 
 def destinations(args):

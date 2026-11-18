@@ -292,6 +292,7 @@ alone, so they wait at the gate together and one approval releases the run. Each
    dependency (`dependencies` on the `mc-publish` step; an external-URL dependency
    pointing at its Modrinth page in `hangarPublish`, since EssentialsX is not on Hangar).
    Keep the two in step with `softdepend` in `plugin.yml`.
+
 A failure while uploading to one destination, such as a registry outage, does not stop
 the others. No publish job writes shared state.
 
@@ -325,7 +326,9 @@ reject it promptly. The job:
    the publish jobs.
 2. For GitHub, verifies the release matches the candidate, then reads the published
    stable releases again and, only if this tag owns the marker, runs
-   `gh release edit <tag> --latest`.
+   `gh release edit <tag> --latest` and reads the latest release back, failing unless it
+   is this tag. Whether a release is marked latest is not part of its completeness: a
+   stable release that does not own the marker is still a complete GitHub destination.
 3. For Hangar, verifies the version matches the candidate, then reads the public Hangar
    versions again and, only if this tag owns the page, runs
    `syncPluginPublicationMainResourcePagePageToHangar` (see
@@ -457,7 +460,7 @@ asks for each selected registry's attestation again.
 | `publish-modrinth`, before or during the upload | Modrinth version may be missing or a draft | Re-inspect the Modrinth owner inventory (a failed create can leave a draft), fix the cause, then `--resume modrinth` |
 | `publish-modrinth`, verification after upload | Version uploaded, not yet visible | Re-run that job once the version is public, or `--resume modrinth` and answer `present` |
 | `publish-hangar`, before or during the upload | Hangar version may be missing or hidden | Re-inspect the Hangar owner inventory, fix the cause, then `--resume hangar` |
-| `shared-state`, rejected, cancelled or failed | Versions complete; the Hangar page or GitHub latest may be stale | Re-run that job, or `--resume github`, `--resume hangar` or both and answer `present`. Ownership is rechecked, so this is safe for any tag; only the owner writes |
+| `shared-state`, rejected, cancelled or failed | Versions complete; the Hangar page or GitHub latest may be stale | Re-run that job, or `--resume github`, `--resume hangar` or both (GitHub asks nothing; answer `present` for Hangar). Ownership is rechecked, so this is safe for any tag; only the owner writes |
 | Any job, candidate expired | No destination can be published from this candidate | See *Expired candidates* |
 
 Only Modrinth `listed` status and Hangar `public` visibility count as complete,

@@ -168,6 +168,38 @@ class ReleaseDestinationTest(unittest.TestCase):
             destination.github(self.directory, manifest, "Ninja6-MC/SessionPulse")
 
     @patch.object(destination.subprocess, "run")
+    def test_stable_github_release_that_is_not_latest_is_complete(self, run):
+        jar = "SessionPulse-1.0.1.jar"
+        checksum = jar + ".sha256"
+        body = "Notes\n\nRequires Java 21.\n"
+        (self.directory / "release-body.md").write_text(body)
+        manifest = {**MANIFEST, "tag": "v1.0.1", "version": "1.0.1", "channel": "release", "files": {
+            jar: hashlib.sha256(b"candidate").hexdigest(), checksum: hashlib.sha256(b"checksum").hexdigest()}}
+        release = {"id": 7, "tag_name": "v1.0.1", "prerelease": False, "draft": False,
+                   "body": body, "assets": [{"name": jar}, {"name": checksum}]}
+        calls = []
+
+        def command(args, **kwargs):
+            calls.append(args)
+            if args[:2] == ["gh", "api"]:
+                if args[2].endswith("/releases/latest"):
+                    return subprocess.CompletedProcess(args, 0, json.dumps({"id": 9, "tag_name": "v1.1.0"}), "")
+                return subprocess.CompletedProcess(args, 0, json.dumps(release), "")
+            directory = Path(args[args.index("--dir") + 1])
+            name = args[args.index("--pattern") + 1]
+            (directory / name).write_bytes(b"candidate" if name == jar else b"checksum")
+            return subprocess.CompletedProcess(args, 0, b"", b"")
+
+        run.side_effect = command
+        # A stable hotfix below a newer stable, or one created with --latest=false before
+        # shared-state marked it, is still a complete GitHub destination.
+        self.assertEqual(destination.github(self.directory, manifest, "Ninja6-MC/SessionPulse"), "complete")
+        self.assertFalse(any("releases/latest" in " ".join(map(str, call)) for call in calls))
+        release["prerelease"] = True
+        with self.assertRaisesRegex(ValueError, "metadata conflicts"):
+            destination.github(self.directory, manifest, "Ninja6-MC/SessionPulse")
+
+    @patch.object(destination.subprocess, "run")
     def test_github_absence_and_partial_asset_upload(self, run):
         manifest = {**MANIFEST, "tag": "v1.2.3-rc.1"}
         missing = subprocess.CompletedProcess([], 1, "", "HTTP 404")

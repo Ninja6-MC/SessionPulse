@@ -107,10 +107,8 @@ def github(directory, manifest, repo):
             path = Path(temp) / asset["name"]
             if not path.is_file() or candidate.digest(path) != manifest["files"][asset["name"]]:
                 raise ValueError(f"Existing GitHub asset {asset['name']} differs from candidate")
-    if not expected_pre:
-        latest = subprocess.run(["gh", "api", f"repos/{repo}/releases/latest"], capture_output=True, text=True)
-        if latest.returncode or json.loads(latest.stdout).get("id") != release.get("id"):
-            raise ValueError("Existing stable release is not GitHub Latest")
+    # The latest marker is shared state, not part of this release: shared-state sets and
+    # verifies it for the owning tag only (release-publisher.py shared-write).
     return "complete"
 
 

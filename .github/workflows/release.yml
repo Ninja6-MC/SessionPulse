@@ -574,7 +574,7 @@ jobs:
       - name: Fail when the GitHub latest marker was not written
         if: ${{ !cancelled() && steps.latest.outcome == 'failure' }}
         run: |
-          echo "::error::The GitHub latest marker step failed. Fix the cause, then re-run this job, or dispatch --resume github for $TAG and answer present."
+          echo "::error::The GitHub latest marker step failed. Fix the cause, then re-run this job, or run scripts/release.sh ${TAG#v} --resume github --candidate-run $CANDIDATE_RUN (GitHub needs no attestation)."
           exit 1
 
   # The two jobs below are N6-REL-06. They write nothing and hold no secret, and neither

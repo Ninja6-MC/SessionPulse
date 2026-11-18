@@ -260,9 +260,10 @@ class SharedPlanTest(unittest.TestCase):
 
 @patch.dict(publisher.os.environ, {"GITHUB_STEP_SUMMARY": ""})
 class SharedWriteTest(unittest.TestCase):
-    def write(self, destination, tag, github=(), hangar=()):
+    def write(self, destination, tag, github=(), hangar=(), latest=None):
         with patch.object(publisher, "public_github_stable", return_value=list(github)) as read_github, \
                 patch.object(publisher, "public_hangar_versions", return_value=list(hangar)) as read_hangar, \
+                patch.object(publisher, "gh_json", return_value={"tag_name": latest or tag}) as self.read_latest, \
                 patch.object(publisher.subprocess, "run") as run, _quiet() as log:
             run.return_value = type("Process", (), {"returncode": 0})
             publisher.shared_write(shared_args(destination=destination, tag=tag))
@@ -290,6 +291,24 @@ class SharedWriteTest(unittest.TestCase):
         self.assertIn("v1.0.1 owns the Hangar project page", log)
         run, _, _, _ = self.write("github", "v1.0.1", github=["1.0.0", "1.0.1"])
         run.assert_called_once_with(["gh", "release", "edit", "v1.0.1", "--repo", "Ninja6-MC/SessionPulse", "--latest"])
+
+    def test_owner_sets_latest_and_reads_it_back(self):
+        run, log, _, _ = self.write("github", "v1.0.1", github=["1.0.0", "1.0.1"])
+        run.assert_called_once_with(["gh", "release", "edit", "v1.0.1", "--repo", "Ninja6-MC/SessionPulse", "--latest"])
+        self.read_latest.assert_called_once_with("repos/Ninja6-MC/SessionPulse/releases/latest")
+        self.assertIn("GitHub latest is now v1.0.1", log)
+        with self.assertRaisesRegex(ValueError, "GitHub latest is v1.0.0 after marking v1.0.1"):
+            self.write("github", "v1.0.1", github=["1.0.0", "1.0.1"], latest="v1.0.0")
+
+    def test_non_owner_stable_leaves_latest_alone(self):
+        run, log, _, _ = self.write("github", "v1.0.1", github=["1.1.0", "1.0.1"])
+        run.assert_not_called()
+        self.read_latest.assert_not_called()
+        self.assertIn("Skipping the GitHub latest marker: v1.0.1 does not own it; v1.1.0 does", log)
+
+    def test_hangar_write_needs_no_latest_read(self):
+        self.write("hangar", "v1.0.1", hangar=["1.0.1"])
+        self.read_latest.assert_not_called()
 
     def test_pre_release_never_takes_the_latest_marker(self):
         run, log, _, _ = self.write("github", "v0.3.0-beta.1", github=[])
